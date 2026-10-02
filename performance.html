@@ -30,12 +30,19 @@
   <label class="btn">Excel 파일 열기<input id="file" type="file" accept=".xlsx,.xls,.csv"></label>
   <label class="opt">시트 <select id="sheet"></select></label>
   <label class="opt">그룹 열 <select id="gcol"></select></label>
+  <label class="opt">현재 시총 <select id="ncol"></select></label>
+  <label class="opt">이전 시총 <select id="pcol"></select></label>
   <label class="opt">계산 <select id="mode">
+    <option value="capchg">그룹 시총 변화율 (현재 시총 합 ÷ 이전 시총 합 − 1)</option>
     <option value="cap">시총 가중평균 (Finviz 방식)</option>
     <option value="avg">단순평균</option>
     <option value="med">중앙값</option>
   </select></label>
-  <label class="opt">색상 기준 ±<input id="scale" type="number" value="3" min="0.5" step="0.5" style="width:50px"/>%</label>
+  <label class="opt">색상 <select id="cmode">
+    <option value="rank">순위 (맨 위 진초록 → 맨 아래 진빨강)</option>
+    <option value="val">값 (±기준 %)</option>
+  </select></label>
+  <label class="opt" id="scalebox" style="display:none">기준 ±<input id="scale" type="number" value="3" min="0.5" step="0.5" style="width:50px"/>%</label>
   <button class="sec" id="png">PNG로 저장</button>
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
 </header>
@@ -87,27 +94,32 @@ function findCol(head, re) { return head.findIndex(h => re.test(h)); }
 
 /* ---------- 그룹 성과 계산 ---------- */
 function compute() {
-  const head = table.head;
-  const gi = +$('gcol').value;
-  const ti = findCol(head, /^ticker$/i), ci = findCol(head, /market\s*cap/i), pi = findCol(head, /change/i);
-  if (pi < 0 || ci < 0) { msg.textContent = '"Market Cap" 또는 "Change %" 열을 찾지 못했습니다.'; return null; }
+  const head = table.head, mode = $('mode').value;
+  const gi = +$('gcol').value, ni = +$('ncol').value, oi = +$('pcol').value;
+  const ti = findCol(head, /^ticker$/i), pi = findCol(head, /change/i);
+  if (mode === 'capchg' ? oi < 0 || ni < 0 : (pi < 0 || ni < 0)) {
+    msg.textContent = mode === 'capchg' ? '"현재 시총"과 "이전 시총" 열을 선택해 주세요.' : '"Market Cap" 또는 "Change %" 열을 찾지 못했습니다.';
+    return null;
+  }
   const map = new Map(), seen = new Set();
   let dup = 0, skip = 0;
   for (const r of table.rows) {
     const g = r[gi] == null ? '' : String(r[gi]).trim();
-    const cap = num(r[ci]), chg = num(r[pi]);
+    const cap = num(r[ni]);
+    const prev = mode === 'capchg' ? num(r[oi]) : NaN;
+    const chg = mode === 'capchg' ? (cap / prev - 1) * 100 : num(r[pi]);
     const t = ti >= 0 && r[ti] != null ? String(r[ti]).trim() : '';
-    if (!g || !(cap > 0) || isNaN(chg)) { skip++; continue; }
+    if (!g || !(cap > 0) || isNaN(chg) || (mode === 'capchg' && !(prev > 0))) { skip++; continue; }
     const key = g + '|' + t;
     if (t && seen.has(key)) { dup++; continue; }
     seen.add(key);
     if (!map.has(g)) map.set(g, []);
-    map.get(g).push({ t, cap, chg });
+    map.get(g).push({ t, cap, prev, chg });
   }
-  const mode = $('mode').value;
   const out = [...map].map(([name, list]) => {
     let val;
-    if (mode === 'cap') { const tot = list.reduce((s, i) => s + i.cap, 0); val = list.reduce((s, i) => s + i.cap * i.chg, 0) / tot; }
+    if (mode === 'capchg') val = (list.reduce((s, i) => s + i.cap, 0) / list.reduce((s, i) => s + i.prev, 0) - 1) * 100;
+    else if (mode === 'cap') { const tot = list.reduce((s, i) => s + i.cap, 0); val = list.reduce((s, i) => s + i.cap * i.chg, 0) / tot; }
     else if (mode === 'avg') val = list.reduce((s, i) => s + i.chg, 0) / list.length;
     else { const s = list.map(i => i.chg).sort((a, b) => a - b), m = s.length >> 1; val = s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
     const sorted = [...list].sort((a, b) => b.chg - a.chg);
@@ -118,11 +130,20 @@ function compute() {
 }
 
 /* ---------- 그리기 ---------- */
-function color(v) {
+const STOPS = [[0, [34, 197, 94]], [0.25, [150, 224, 165]], [0.5, [226, 226, 226]], [0.75, [244, 160, 160]], [1, [239, 48, 48]]];
+function rankColor(t) {            // t: 0(맨 위, 진초록) → 1(맨 아래, 진빨강)
+  for (let i = 1; i < STOPS.length; i++) {
+    if (t <= STOPS[i][0]) {
+      const [t0, c0] = STOPS[i - 1], [t1, c1] = STOPS[i], f = (t - t0) / (t1 - t0);
+      return `rgb(${c0.map((c, k) => Math.round(c + (c1[k] - c) * f))})`;
+    }
+  }
+  return `rgb(${STOPS[STOPS.length - 1][1]})`;
+}
+function color(v, i, n) {
+  if ($('cmode').value === 'rank') return rankColor(n > 1 ? i / (n - 1) : 0);
   const sc = parseFloat($('scale').value) || 3;
-  const t = Math.min(Math.abs(v) / sc, 1);
-  const gray = [65, 69, 84], tgt = v >= 0 ? [48, 204, 90] : [246, 53, 56];
-  return `rgb(${gray.map((g, i) => Math.round(g + (tgt[i] - g) * (0.45 + 0.55 * t)))})`;
+  return rankColor(0.5 - Math.max(-1, Math.min(1, v / sc)) / 2);
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 const pct = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
@@ -158,7 +179,7 @@ function render() {
   const x0 = PL + plotW * (maxN / span);
   const k = plotW / span;
 
-  const modeName = { cap: '시총 가중평균', avg: '단순평균', med: '중앙값' }[$('mode').value];
+  const modeName = { capchg: '그룹 시총 변화율', cap: '시총 가중평균', avg: '단순평균', med: '중앙값' }[$('mode').value];
   let out = `<rect width="${W}" height="${H}" fill="#1b1d22"/>`;
   out += `<text x="16" y="30" font-size="20" font-weight="bold" fill="#fff">Group Performance — Change % (${modeName})</text>`;
   shown.forEach((g, i) => {
@@ -168,9 +189,9 @@ function render() {
     out += `<g><title>${esc(tip)}</title>`;
     out += `<rect x="${LEFT - 220}" y="${y - 2}" width="${W - LEFT + 220}" height="${ROW - 4}" fill="transparent"/>`;
     out += `<text x="${LEFT - 12}" y="${y + bh / 2 + 6}" text-anchor="end" font-size="16" font-weight="bold" fill="#eee">${esc(g.name)} <tspan font-size="12" fill="#888" font-weight="normal">(${g.n})</tspan></text>`;
-    out += `<rect x="${x}" y="${y}" width="${Math.max(w, 1)}" height="${bh}" fill="${color(g.val)}" rx="2"/>`;
+    out += `<rect x="${x}" y="${y}" width="${Math.max(w, 1)}" height="${bh}" fill="${color(g.val, i, shown.length)}" rx="2"/>`;
     const lx = g.val >= 0 ? x0 + w + 8 : x0 - w - 8;
-    out += `<text x="${lx}" y="${y + bh / 2 + 6}" text-anchor="${g.val >= 0 ? 'start' : 'end'}" font-size="15" font-weight="bold" fill="${g.val >= 0 ? '#5fe07f' : '#ff7478'}">${pct(g.val)}</text></g>`;
+    out += `<text x="${lx}" y="${y + bh / 2 + 6}" text-anchor="${g.val >= 0 ? 'start' : 'end'}" font-size="15" font-weight="bold" fill="${color(g.val, i, shown.length)}">${pct(g.val)}</text></g>`;
   });
   out += `<line x1="${x0}" y1="${TOP - 8}" x2="${x0}" y2="${H - 22}" stroke="#777" stroke-width="1"/>`;
   svg.innerHTML = out;
@@ -178,12 +199,24 @@ function render() {
 }
 
 /* ---------- 입력 처리 ---------- */
+function fillSelect(id, withNone) {
+  const sel = $(id); sel.innerHTML = '';
+  if (withNone) { const o = document.createElement('option'); o.value = -1; o.textContent = '(없음)'; sel.appendChild(o); }
+  table.head.forEach((h, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `${colLetter(i)}열 · ${h || '(빈 제목)'}`; sel.appendChild(o); });
+  return sel;
+}
 function setSheet(name) {
   table = readSheet(name);
-  const sel = $('gcol'); sel.innerHTML = '';
-  table.head.forEach((h, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `${colLetter(i)}열 · ${h || '(빈 제목)'}`; sel.appendChild(o); });
-  // 기본값: H열 (없으면 마지막 열)
-  sel.value = Math.min(7, table.head.length - 1);
+  const head = table.head;
+  const g = fillSelect('gcol'), n = fillSelect('ncol', true), p = fillSelect('pcol', true);
+  // 그룹 열: 'Industry Class III' 제목 → 없으면 H열(마지막 열 이내)
+  const gi = findCol(head, /industry\s*class\s*iii/i);
+  g.value = gi >= 0 ? gi : Math.min(7, head.length - 1);
+  // 시총 열: 'Market Cap' 제목이 2개 이상이면 앞=현재, 뒤=이전 → 시총 변화율 기본
+  const caps = head.map((h, i) => /market\s*cap/i.test(h) ? i : -1).filter(i => i >= 0);
+  n.value = caps.length ? caps[0] : -1;
+  p.value = caps.length > 1 ? caps[1] : -1;
+  $('mode').value = caps.length > 1 ? 'capchg' : 'cap';
   hidden.clear();
   render();
 }
@@ -199,7 +232,9 @@ $('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target
 $('sheet').onchange = e => setSheet(e.target.value);
 $('gcol').onchange = () => { hidden.clear(); render(); };
 $('mode').onchange = render;
+$('ncol').onchange = $('pcol').onchange = () => { hidden.clear(); render(); };
 $('scale').oninput = render;
+$('cmode').onchange = () => { $('scalebox').style.display = $('cmode').value === 'val' ? '' : 'none'; render(); };
 const drop = $('drop');
 drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('over'));
