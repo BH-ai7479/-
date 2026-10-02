@@ -15,6 +15,9 @@
   #msg { font-size:13px; color:#aaa; }
   #drop { margin:0 16px 16px; border:2px dashed #555; border-radius:6px; padding:6px; }
   #drop.over { border-color:#3a7bd5; }
+  #chips { margin:0 16px 10px; display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { font-size:12px; padding:4px 10px; border-radius:12px; background:#3a7bd5; color:#fff; cursor:pointer; user-select:none; }
+  .chip.off { background:#333; color:#888; text-decoration:line-through; }
   svg { display:block; width:100%; height:auto; }
   .help { margin:0 16px 24px; font-size:13px; color:#999; line-height:1.6; }
 </style>
@@ -28,6 +31,7 @@
   <label style="font-size:13px">색상 기준 ±<input id="scale" type="number" value="3" min="0.5" step="0.5" style="width:50px"/>%</label>
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
 </header>
+<div id="chips"></div>
 <div id="drop"><svg id="map" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div class="help">
   Excel 열 구성: <b>A</b>=분류(Group), <b>B</b>=Ticker, <b>C</b>=Market Cap, <b>D</b>=Change %. 첫 행은 제목 행으로 봅니다.<br>
@@ -133,8 +137,24 @@ function color(chg) {
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
 function fmt(chg) { return `(${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)`; }
 
-function render(items) {
-  lastItems = items;
+const hidden = new Set();   // 화면에서 제외할 그룹 이름 (위쪽 버튼으로 껐다 켬)
+function renderChips(items) {
+  const names = [...new Set(items.map(i => i.group))];
+  const box = document.getElementById('chips');
+  box.innerHTML = '';
+  for (const n of names) {
+    const c = document.createElement('span');
+    c.className = 'chip' + (hidden.has(n) ? ' off' : '');
+    c.textContent = n;
+    c.onclick = () => { hidden.has(n) ? hidden.delete(n) : hidden.add(n); render(lastItems); };
+    box.appendChild(c);
+  }
+}
+function render(all) {
+  lastItems = all;
+  renderChips(all);
+  const items = all.filter(i => !hidden.has(i.group));
+  if (!items.length) { svg.innerHTML = ''; msg.textContent = '표시할 그룹이 없습니다.'; return; }
   const byGroup = new Map();
   for (const it of items) {
     if (!byGroup.has(it.group)) byGroup.set(it.group, []);
@@ -196,7 +216,7 @@ function render(items) {
     }
   }
   svg.innerHTML = out;
-  msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중` + (dupCount ? ` (중복 ${dupCount}행 제외)` : '');
+  msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중` + (dupCount ? ` (중복 ${dupCount}행 제외)` : '') + (hidden.size ? ` · 숨긴 그룹 ${hidden.size}개` : '');
 }
 
 /* ---------- 입력 처리 ---------- */
