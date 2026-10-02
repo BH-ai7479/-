@@ -35,7 +35,7 @@
 </div>
 
 <script>
-const W = 1600, H = 900, HEADER = 16, GAP = 2;
+const W = 1600, H = 900, HEADER = 30, GAP = 2;
 const svg = document.getElementById('map');
 const msg = document.getElementById('msg');
 
@@ -151,13 +151,33 @@ function render(items) {
   for (const g of groups) {
     const gx = g.x + GAP / 2, gy = g.y + GAP / 2, gw = g.w - GAP, gh = g.h - GAP;
     out += `<rect x="${gx}" y="${gy}" width="${gw}" height="${gh}" fill="#262a33"/>`;
-    const showHeader = gh > HEADER + 12 && gw > 40;
-    if (showHeader) {
-      const maxCh = Math.floor((gw - 8) / 7);
-      const label = g.name.toUpperCase();
-      out += `<text x="${gx + 4}" y="${gy + 12}" font-size="11" font-weight="bold" fill="#ddd">${esc(label.length > maxCh ? label.slice(0, Math.max(maxCh - 1, 1)) + '…' : label)}</text>`;
+    const label = g.name.toUpperCase();
+    const avail = gw - 12;
+    const cw = 0.68;                                 // 글자 1개의 대략적 폭(글자 크기 대비)
+    let fs = 20, lines = [label];                    // 그룹 이름 글자 크기: 기본 20, 좁으면 줄이고, 그래도 안 되면 2줄로
+    while (fs > 14 && label.length * fs * cw > avail) fs--;
+    if (label.length * fs * cw > avail) {
+      const words = label.split(/(?<=[ /])/);        // 공백·'/' 뒤에서 줄바꿈
+      let best = null;
+      for (let i = 1; i < words.length; i++) {
+        const l1 = words.slice(0, i).join('').trimEnd(), l2 = words.slice(i).join('').trimEnd();
+        const m = Math.max(l1.length, l2.length);
+        if (!best || m < best.m) best = { m, l: [l1, l2] };
+      }
+      if (best) { lines = best.l; fs = 14; }
     }
-    const top = showHeader ? HEADER : 0;
+    const maxCh = Math.floor(avail / (fs * cw));
+    lines = lines.map(t => t.length > maxCh ? t.slice(0, Math.max(maxCh - 1, 1)) + '…' : t);
+    const headH = lines.length > 1 ? HEADER + fs + 2 : HEADER;
+    const showHeader = gh > headH + 12 && gw > 40;
+    if (showHeader) {
+      out += `<g><title>${esc(g.name)} · ${g.list.length}종목 · Market Cap ${g.value.toLocaleString()}</title>`;
+      lines.forEach((t, i) => {
+        out += `<text x="${gx + 6}" y="${gy + 21 + i * (fs + 2)}" font-size="${fs}" font-weight="bold" fill="#fff">${esc(t)}</text>`;
+      });
+      out += `</g>`;
+    }
+    const top = showHeader ? headH : 0;
     const kids = g.list.map(i => ({ ...i, value: i.cap }));
     squarify(kids, gx + 1, gy + top + 1, gw - 2, gh - top - 2);
     for (const k of kids) {
