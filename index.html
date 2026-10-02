@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Heat Map</title>
+<script src="xlsx.full.min.js"></script>
+<style>
+  body { margin:0; background:#1b1d22; color:#ddd; font-family:Arial, "Malgun Gothic", sans-serif; }
+  header { padding:12px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0 12px 0 0; }
+  button, label.btn { background:#3a7bd5; color:#fff; border:0; border-radius:4px; padding:8px 14px; cursor:pointer; font-size:14px; }
+  button.sec { background:#444; }
+  input[type=file] { display:none; }
+  #msg { font-size:13px; color:#aaa; }
+  #drop { margin:0 16px 16px; border:2px dashed #555; border-radius:6px; padding:6px; }
+  #drop.over { border-color:#3a7bd5; }
+  svg { display:block; width:100%; height:auto; }
+  .help { margin:0 16px 24px; font-size:13px; color:#999; line-height:1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>My Heat Map</h1>
+  <label class="btn">Excel 파일 열기<input id="file" type="file" accept=".xlsx,.xls,.csv"></label>
+  <button class="sec" id="sample">샘플 데이터 보기</button>
+  <button class="sec" id="png">PNG로 저장</button>
+  <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
+</header>
+<div id="drop"><svg id="map" viewBox="0 0 1200 700" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div class="help">
+  Excel 열 구성: <b>A</b>=분류(Group), <b>B</b>=Ticker, <b>C</b>=Market Cap, <b>D</b>=Change %. 첫 행은 제목 행으로 봅니다.<br>
+  Change %는 <code>1.09</code>, <code>1.09%</code>, 또는 Excel의 % 서식(1.09%) 모두 인식합니다.
+</div>
+
+<script>
+const W = 1200, H = 700, HEADER = 16, GAP = 2;
+const svg = document.getElementById('map');
+const msg = document.getElementById('msg');
+
+/* ---------- 데이터 읽기 ---------- */
+function num(v) {
+  if (typeof v === 'number') return v;
+  if (v == null) return NaN;
+  let s = String(v).trim().replace(/[,$\s]/g, '');
+  let mult = 1;
+  const m = s.match(/([KMBT])$/i);
+  if (m) { mult = { K:1e3, M:1e6, B:1e9, T:1e12 }[m[1].toUpperCase()]; s = s.slice(0, -1); }
+  return parseFloat(s.replace('%', '')) * mult;
+}
+
+function rowsToItems(rows) {
+  const items = [];
+  for (const r of rows.slice(1)) {
+    const [g, t, c, d] = r;
+    const cap = num(c);
+    if (!g || !t || !(cap > 0)) continue;
+    let chg = num(d);
+    if (isNaN(chg)) chg = 0;
+    items.push({ group: String(g).trim(), ticker: String(t).trim(), cap, chg });
+  }
+  return items;
+}
+
+function readWorkbook(buf) {
+  const wb = XLSX.read(buf, { type: 'array', cellNF: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const rows = [];
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    const row = [];
+    for (let C = 0; C < 4; C++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (!cell) { row.push(null); continue; }
+      let v = cell.v;
+      // Excel의 % 서식 셀(0.0109 → 1.09%)은 100을 곱해서 % 단위로 맞춤
+      if (C === 3 && typeof v === 'number' && cell.z && String(cell.z).includes('%')) v *= 100;
+      row.push(v);
+    }
+    rows.push(row);
+  }
+  return rowsToItems(rows);
+}
+
+/* ---------- Treemap (squarified) ---------- */
+function squarify(nodes, x, y, w, h) {
+  // nodes: 값(value) 내림차순. 각 node에 x,y,w,h를 채워 넣음
+  const total = nodes.reduce((s, n) => s + n.value, 0);
+  const scale = (w * h) / total;
+  let i = 0;
+  while (i < nodes.length) {
+    const short = Math.min(w, h);
+    let row = [], rowArea = 0, best = Infinity;
+    while (i < nodes.length) {
+      const a = nodes[i].value * scale;
+      const nArea = rowArea + a;
+      const mx = Math.max(a, ...row.map(n => n.value * scale));
+      const mn = Math.min(a, ...row.map(n => n.value * scale));
+      const worst = Math.max(short * short * mx / (nArea * nArea), nArea * nArea / (short * short * mn));
+      if (row.length && worst > best) break;
+      row.push(nodes[i]); rowArea = nArea; best = worst; i++;
+    }
+    const thick = rowArea / short;
+    let off = 0;
+    for (const n of row) {
+      const len = (n.value * scale) / thick;
+      if (w >= h) { n.x = x; n.y = y + off; n.w = thick; n.h = len; }
+      else        { n.x = x + off; n.y = y; n.w = len; n.h = thick; }
+      off += len;
+    }
+    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+  }
+}
+
+/* ---------- 색상 (+ 초록, - 빨강, 0 근처 회색) ---------- */
+function color(chg) {
+  const t = Math.min(Math.abs(chg) / 3, 1);       // ±3%에서 가장 진하게
+  const gray = [65, 69, 84];
+  const target = chg >= 0 ? [48, 204, 90] : [246, 53, 56];
+  if (chg === 0) return `rgb(${gray})`;
+  const c = gray.map((g, i) => Math.round(g + (target[i] - g) * (0.45 + 0.55 * t)));
+  return `rgb(${c})`;
+}
+
+/* ---------- 그리기 ---------- */
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+function fmt(chg) { return `(${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)`; }
+
+function render(items) {
+  const byGroup = new Map();
+  for (const it of items) {
+    if (!byGroup.has(it.group)) byGroup.set(it.group, []);
+    byGroup.get(it.group).push(it);
+  }
+  const groups = [...byGroup].map(([name, list]) => {
+    list.sort((a, b) => b.cap - a.cap);
+    return { name, list, value: list.reduce((s, i) => s + i.cap, 0) };
+  }).sort((a, b) => b.value - a.value);
+
+  squarify(groups, 0, 0, W, H);
+
+  let out = `<rect width="${W}" height="${H}" fill="#1b1d22"/>`;
+  for (const g of groups) {
+    const gx = g.x + GAP / 2, gy = g.y + GAP / 2, gw = g.w - GAP, gh = g.h - GAP;
+    out += `<rect x="${gx}" y="${gy}" width="${gw}" height="${gh}" fill="#262a33"/>`;
+    const showHeader = gh > HEADER + 12 && gw > 40;
+    if (showHeader) {
+      out += `<text x="${gx + 4}" y="${gy + 12}" font-size="11" font-weight="bold" fill="#ddd">${esc(g.name.toUpperCase())}</text>`;
+    }
+    const top = showHeader ? HEADER : 0;
+    const kids = g.list.map(i => ({ ...i, value: i.cap }));
+    squarify(kids, gx + 1, gy + top + 1, gw - 2, gh - top - 2);
+    for (const k of kids) {
+      const x = k.x + 0.5, y = k.y + 0.5, w = k.w - 1, h = k.h - 1;
+      out += `<g><title>${esc(k.ticker)} ${fmt(k.chg)}\n${esc(g.name)} · Market Cap ${k.cap.toLocaleString()}</title>`;
+      out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color(k.chg)}"/>`;
+      const m = Math.min(w, h);
+      if (m >= 14 && w >= 22) {
+        const fs = Math.max(8, Math.min(m * 0.32, w / (k.ticker.length * 0.7), 34));
+        const cx = x + w / 2, cy = y + h / 2;
+        const showChg = h > fs * 2.1 && w > fs * 3.2;
+        out += `<text x="${cx}" y="${showChg ? cy - fs * 0.1 : cy + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="bold" fill="#fff">${esc(k.ticker)}</text>`;
+        if (showChg) out += `<text x="${cx}" y="${cy + fs * 0.95}" text-anchor="middle" font-size="${fs * 0.72}" fill="#fff">${fmt(k.chg)}</text>`;
+      }
+      out += `</g>`;
+    }
+  }
+  svg.innerHTML = out;
+  msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중`;
+}
+
+/* ---------- 입력 처리 ---------- */
+async function loadFile(file) {
+  try {
+    const items = readWorkbook(await file.arrayBuffer());
+    if (!items.length) { msg.textContent = '읽을 수 있는 데이터가 없습니다. 열 구성(A~D)을 확인해 주세요.'; return; }
+    render(items);
+  } catch (e) { msg.textContent = '파일을 읽지 못했습니다: ' + e.message; }
+}
+document.getElementById('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); });
+
+const SAMPLE = [
+ ['Pharmaceutical','LLY',700,-0.63],['Pharmaceutical','JNJ',380,-2.3],['Pharmaceutical','ABBV',330,-0.64],['Pharmaceutical','MRK',250,-1.2],['Pharmaceutical','PFE',150,0.4],['Pharmaceutical','AMGN',140,1.2],['Pharmaceutical','BMY',100,-0.3],['Pharmaceutical','GILD',110,0.8],
+ ['Semiconductor','NVDA',3000,1.09],['Semiconductor','AVGO',800,-2.15],['Semiconductor','AMD',260,0.65],['Semiconductor','MU',120,3.03],['Semiconductor','INTC',90,-0.19],['Semiconductor','QCOM',180,-1.06],['Semiconductor','TXN',170,0.44],['Semiconductor','AMAT',150,3.5],
+ ['Software','MSFT',3100,-0.02],['Software','AAPL',3000,-0.81],['Software','ORCL',400,0.56],['Software','CRM',280,1.6],['Software','ADBE',200,-0.5],
+ ['Internet','GOOGL',2000,-1.7],['Internet','META',1300,0.10],['Internet','AMZN',1900,-0.37],['Internet','NFLX',300,-2.49],
+ ['Bank','JPM',600,0.71],['Bank','BAC',300,-1.39],['Bank','WFC',200,0.25],['Bank','C',120,-1.92],['Bank','GS',150,0.9],['Bank','MS',140,-0.4],
+];
+function sampleItems() {
+  return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE]);
+}
+document.getElementById('sample').onclick = () => render(sampleItems());
+
+document.getElementById('png').onclick = () => {
+  const xml = new XMLSerializer().serializeToString(svg);
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = W * 2; c.height = H * 2;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    const a = document.createElement('a');
+    a.download = 'heatmap.png'; a.href = c.toDataURL('image/png'); a.click();
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+};
+
+render(sampleItems());
+</script>
+</body>
+</html>
