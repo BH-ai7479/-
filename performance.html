@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Group Performance</title>
+<script src="xlsx.full.min.js"></script>
+<style>
+  body { margin:0; background:#1b1d22; color:#ddd; font-family:Arial, "Malgun Gothic", sans-serif; }
+  header { padding:12px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0 12px 0 0; }
+  button, label.btn { background:#3a7bd5; color:#fff; border:0; border-radius:4px; padding:8px 14px; cursor:pointer; font-size:14px; }
+  button.sec { background:#444; }
+  input[type=file] { display:none; }
+  select, input[type=number] { background:#2b2f38; color:#ddd; border:1px solid #555; border-radius:4px; padding:5px; }
+  label.opt { font-size:13px; }
+  #msg { font-size:13px; color:#aaa; }
+  #drop { margin:0 16px 16px; border:2px dashed #555; border-radius:6px; padding:6px; }
+  #drop.over { border-color:#3a7bd5; }
+  #chips { margin:0 16px 10px; display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { font-size:12px; padding:4px 10px; border-radius:12px; background:#3a7bd5; color:#fff; cursor:pointer; user-select:none; }
+  .chip.off { background:#333; color:#888; text-decoration:line-through; }
+  svg { display:block; width:100%; height:auto; }
+  .help { margin:0 16px 24px; font-size:13px; color:#999; line-height:1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Group Performance</h1>
+  <label class="btn">Excel 파일 열기<input id="file" type="file" accept=".xlsx,.xls,.csv"></label>
+  <label class="opt">시트 <select id="sheet"></select></label>
+  <label class="opt">그룹 열 <select id="gcol"></select></label>
+  <label class="opt">계산 <select id="mode">
+    <option value="cap">시총 가중평균 (Finviz 방식)</option>
+    <option value="avg">단순평균</option>
+    <option value="med">중앙값</option>
+  </select></label>
+  <label class="opt">색상 기준 ±<input id="scale" type="number" value="3" min="0.5" step="0.5" style="width:50px"/>%</label>
+  <button class="sec" id="png">PNG로 저장</button>
+  <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
+</header>
+<div id="chips"></div>
+<div id="drop"><svg id="chart" viewBox="0 0 1200 600" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div class="help">
+  열 이름(첫 행)으로 자동 인식: <b>Ticker</b>, <b>Market Cap</b>, <b>Change %</b>, 그리고 그룹 열.<br>
+  그룹 열은 기본적으로 <b>H열</b>이며, 위 "그룹 열"에서 다른 열로 바꿀 수 있습니다. 같은 그룹의 같은 Ticker 중복 행은 1번만 계산합니다.<br>
+  Change %는 Excel % 서식(-3.38%)과 숫자(-3.38) 모두 인식합니다. 막대 위에 마우스를 올리면 종목 수와 상·하위 종목이 보입니다.
+</div>
+
+<script>
+const W = 1200, ROW = 34, TOP = 56, LEFT = 230, RIGHT = 110;
+const svg = document.getElementById('chart');
+const msg = document.getElementById('msg');
+const $ = id => document.getElementById(id);
+
+let wb = null, table = null, groups = [];     // table: { head:[], rows:[[...]] }
+const hidden = new Set();
+
+/* ---------- 데이터 읽기 ---------- */
+function num(v) {
+  if (typeof v === 'number') return v;
+  if (v == null) return NaN;
+  const s = String(v).trim().replace(/[,$\s]/g, '').replace('%', '');
+  return s === '' ? NaN : parseFloat(s);
+}
+function colLetter(i) { return XLSX.utils.encode_col(i); }
+
+function readSheet(name) {
+  const ws = wb.Sheets[name];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const rows = [];
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    const row = [];
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (!cell) { row.push(null); continue; }
+      let v = cell.v;
+      if (typeof v === 'number' && cell.z && String(cell.z).includes('%')) v *= 100;   // % 서식 → % 단위
+      row.push(v);
+    }
+    rows.push(row);
+  }
+  return { head: rows[0].map(h => (h == null ? '' : String(h).trim())), rows: rows.slice(1) };
+}
+
+function findCol(head, re) { return head.findIndex(h => re.test(h)); }
+
+/* ---------- 그룹 성과 계산 ---------- */
+function compute() {
+  const head = table.head;
+  const gi = +$('gcol').value;
+  const ti = findCol(head, /^ticker$/i), ci = findCol(head, /market\s*cap/i), pi = findCol(head, /change/i);
+  if (pi < 0 || ci < 0) { msg.textContent = '"Market Cap" 또는 "Change %" 열을 찾지 못했습니다.'; return null; }
+  const map = new Map(), seen = new Set();
+  let dup = 0, skip = 0;
+  for (const r of table.rows) {
+    const g = r[gi] == null ? '' : String(r[gi]).trim();
+    const cap = num(r[ci]), chg = num(r[pi]);
+    const t = ti >= 0 && r[ti] != null ? String(r[ti]).trim() : '';
+    if (!g || !(cap > 0) || isNaN(chg)) { skip++; continue; }
+    const key = g + '|' + t;
+    if (t && seen.has(key)) { dup++; continue; }
+    seen.add(key);
+    if (!map.has(g)) map.set(g, []);
+    map.get(g).push({ t, cap, chg });
+  }
+  const mode = $('mode').value;
+  const out = [...map].map(([name, list]) => {
+    let val;
+    if (mode === 'cap') { const tot = list.reduce((s, i) => s + i.cap, 0); val = list.reduce((s, i) => s + i.cap * i.chg, 0) / tot; }
+    else if (mode === 'avg') val = list.reduce((s, i) => s + i.chg, 0) / list.length;
+    else { const s = list.map(i => i.chg).sort((a, b) => a - b), m = s.length >> 1; val = s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+    const sorted = [...list].sort((a, b) => b.chg - a.chg);
+    return { name, n: list.length, cap: list.reduce((s, i) => s + i.cap, 0), val, best: sorted.slice(0, 3), worst: sorted.slice(-3).reverse() };
+  });
+  out.dup = dup; out.skip = skip;
+  return out;
+}
+
+/* ---------- 그리기 ---------- */
+function color(v) {
+  const sc = parseFloat($('scale').value) || 3;
+  const t = Math.min(Math.abs(v) / sc, 1);
+  const gray = [65, 69, 84], tgt = v >= 0 ? [48, 204, 90] : [246, 53, 56];
+  return `rgb(${gray.map((g, i) => Math.round(g + (tgt[i] - g) * (0.45 + 0.55 * t)))})`;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+const pct = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+const capFmt = v => v >= 1e12 ? (v / 1e12).toFixed(2) + 'T' : v >= 1e9 ? (v / 1e9).toFixed(1) + 'B' : (v / 1e6).toFixed(0) + 'M';
+
+function renderChips() {
+  const box = $('chips'); box.innerHTML = '';
+  for (const g of groups) {
+    const c = document.createElement('span');
+    c.className = 'chip' + (hidden.has(g.name) ? ' off' : '');
+    c.textContent = g.name;
+    c.onclick = () => { hidden.has(g.name) ? hidden.delete(g.name) : hidden.add(g.name); render(); };
+    box.appendChild(c);
+  }
+}
+
+function render() {
+  if (!table) return;
+  groups = compute();
+  if (!groups) return;
+  renderChips();
+  const shown = groups.filter(g => !hidden.has(g.name)).sort((a, b) => b.val - a.val);
+  if (!shown.length) { svg.innerHTML = ''; msg.textContent = '표시할 그룹이 없습니다.'; return; }
+
+  const H = TOP + shown.length * ROW + 30;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const maxAbs = Math.max(...shown.map(g => Math.abs(g.val)), 0.01);
+  const hasNeg = shown.some(g => g.val < 0), hasPos = shown.some(g => g.val > 0);
+  const PL = LEFT + 80, plotW = W - PL - RIGHT;   // 왼쪽 80px은 음수 값 라벨 자리
+  // 0 기준선 위치: 음수/양수 비율에 맞춰 배분
+  const maxP = Math.max(0, ...shown.map(g => g.val)), maxN = Math.max(0, ...shown.map(g => -g.val));
+  const span = (maxP + maxN) || 1;
+  const x0 = PL + plotW * (maxN / span);
+  const k = plotW / span;
+
+  const modeName = { cap: '시총 가중평균', avg: '단순평균', med: '중앙값' }[$('mode').value];
+  let out = `<rect width="${W}" height="${H}" fill="#1b1d22"/>`;
+  out += `<text x="16" y="30" font-size="20" font-weight="bold" fill="#fff">Group Performance — Change % (${modeName})</text>`;
+  shown.forEach((g, i) => {
+    const y = TOP + i * ROW, bh = ROW - 8, w = Math.abs(g.val) * k;
+    const x = g.val >= 0 ? x0 : x0 - w;
+    const tip = `${g.name} ${pct(g.val)}\n${g.n}종목 · Market Cap ${capFmt(g.cap)}\n▲ ${g.best.map(s => s.t + ' ' + pct(s.chg)).join(', ')}\n▼ ${g.worst.map(s => s.t + ' ' + pct(s.chg)).join(', ')}`;
+    out += `<g><title>${esc(tip)}</title>`;
+    out += `<rect x="${LEFT - 220}" y="${y - 2}" width="${W - LEFT + 220}" height="${ROW - 4}" fill="transparent"/>`;
+    out += `<text x="${LEFT - 12}" y="${y + bh / 2 + 6}" text-anchor="end" font-size="16" font-weight="bold" fill="#eee">${esc(g.name)} <tspan font-size="12" fill="#888" font-weight="normal">(${g.n})</tspan></text>`;
+    out += `<rect x="${x}" y="${y}" width="${Math.max(w, 1)}" height="${bh}" fill="${color(g.val)}" rx="2"/>`;
+    const lx = g.val >= 0 ? x0 + w + 8 : x0 - w - 8;
+    out += `<text x="${lx}" y="${y + bh / 2 + 6}" text-anchor="${g.val >= 0 ? 'start' : 'end'}" font-size="15" font-weight="bold" fill="${g.val >= 0 ? '#5fe07f' : '#ff7478'}">${pct(g.val)}</text></g>`;
+  });
+  out += `<line x1="${x0}" y1="${TOP - 8}" x2="${x0}" y2="${H - 22}" stroke="#777" stroke-width="1"/>`;
+  svg.innerHTML = out;
+  msg.textContent = `${shown.length}개 그룹 · ${shown.reduce((s, g) => s + g.n, 0)}개 종목` + (groups.dup ? ` (중복 ${groups.dup}행 제외)` : '') + (groups.skip ? ` · 값 없음 ${groups.skip}행 제외` : '') + (hidden.size ? ` · 숨긴 그룹 ${hidden.size}개` : '');
+}
+
+/* ---------- 입력 처리 ---------- */
+function setSheet(name) {
+  table = readSheet(name);
+  const sel = $('gcol'); sel.innerHTML = '';
+  table.head.forEach((h, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `${colLetter(i)}열 · ${h || '(빈 제목)'}`; sel.appendChild(o); });
+  // 기본값: H열 (없으면 마지막 열)
+  sel.value = Math.min(7, table.head.length - 1);
+  hidden.clear();
+  render();
+}
+async function loadFile(file) {
+  try {
+    wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellNF: true });
+    const sh = $('sheet'); sh.innerHTML = '';
+    wb.SheetNames.forEach(n => { const o = document.createElement('option'); o.textContent = n; sh.appendChild(o); });
+    setSheet(wb.SheetNames[0]);
+  } catch (e) { msg.textContent = '파일을 읽지 못했습니다: ' + e.message; }
+}
+$('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+$('sheet').onchange = e => setSheet(e.target.value);
+$('gcol').onchange = () => { hidden.clear(); render(); };
+$('mode').onchange = render;
+$('scale').oninput = render;
+const drop = $('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); });
+
+$('png').onclick = () => {
+  const xml = new XMLSerializer().serializeToString(svg);
+  const vb = svg.viewBox.baseVal;
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = vb.width * 2; c.height = vb.height * 2;
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const a = document.createElement('a');
+    a.download = 'group_performance.png'; a.href = c.toDataURL('image/png'); a.click();
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+};
+</script>
+</body>
+</html>
