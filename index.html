@@ -25,16 +25,17 @@
   <label class="btn">Excel 파일 열기<input id="file" type="file" accept=".xlsx,.xls,.csv"></label>
   <button class="sec" id="sample">샘플 데이터 보기</button>
   <button class="sec" id="png">PNG로 저장</button>
+  <label style="font-size:13px">색상 기준 ±<input id="scale" type="number" value="3" min="0.5" step="0.5" style="width:50px"/>%</label>
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
 </header>
-<div id="drop"><svg id="map" viewBox="0 0 1200 700" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div id="drop"><svg id="map" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div class="help">
   Excel 열 구성: <b>A</b>=분류(Group), <b>B</b>=Ticker, <b>C</b>=Market Cap, <b>D</b>=Change %. 첫 행은 제목 행으로 봅니다.<br>
   Change %는 <code>1.09</code>, <code>1.09%</code>, 또는 Excel의 % 서식(1.09%) 모두 인식합니다.
 </div>
 
 <script>
-const W = 1200, H = 700, HEADER = 16, GAP = 2;
+const W = 1600, H = 900, HEADER = 16, GAP = 2;
 const svg = document.getElementById('map');
 const msg = document.getElementById('msg');
 
@@ -49,14 +50,19 @@ function num(v) {
   return parseFloat(s.replace('%', '')) * mult;
 }
 
+let dupCount = 0, lastItems = [];
 function rowsToItems(rows) {
-  const items = [];
+  const items = [], seen = new Set();
+  dupCount = 0;
   for (const r of rows.slice(1)) {
     const [g, t, c, d] = r;
     const cap = num(c);
     if (!g || !t || !(cap > 0)) continue;
     let chg = num(d);
     if (isNaN(chg)) chg = 0;
+    const key = String(g).trim() + '|' + String(t).trim();
+    if (seen.has(key)) { dupCount++; continue; }   // 같은 분류의 같은 Ticker 중복 행은 1번만
+    seen.add(key);
     items.push({ group: String(g).trim(), ticker: String(t).trim(), cap, chg });
   }
   return items;
@@ -113,8 +119,9 @@ function squarify(nodes, x, y, w, h) {
 }
 
 /* ---------- 색상 (+ 초록, - 빨강, 0 근처 회색) ---------- */
+const SCALE = () => parseFloat(document.getElementById('scale').value) || 3;
 function color(chg) {
-  const t = Math.min(Math.abs(chg) / 3, 1);       // ±3%에서 가장 진하게
+  const t = Math.min(Math.abs(chg) / SCALE(), 1);   // 기준 %에서 가장 진하게
   const gray = [65, 69, 84];
   const target = chg >= 0 ? [48, 204, 90] : [246, 53, 56];
   if (chg === 0) return `rgb(${gray})`;
@@ -127,6 +134,7 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'
 function fmt(chg) { return `(${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)`; }
 
 function render(items) {
+  lastItems = items;
   const byGroup = new Map();
   for (const it of items) {
     if (!byGroup.has(it.group)) byGroup.set(it.group, []);
@@ -145,7 +153,9 @@ function render(items) {
     out += `<rect x="${gx}" y="${gy}" width="${gw}" height="${gh}" fill="#262a33"/>`;
     const showHeader = gh > HEADER + 12 && gw > 40;
     if (showHeader) {
-      out += `<text x="${gx + 4}" y="${gy + 12}" font-size="11" font-weight="bold" fill="#ddd">${esc(g.name.toUpperCase())}</text>`;
+      const maxCh = Math.floor((gw - 8) / 7);
+      const label = g.name.toUpperCase();
+      out += `<text x="${gx + 4}" y="${gy + 12}" font-size="11" font-weight="bold" fill="#ddd">${esc(label.length > maxCh ? label.slice(0, Math.max(maxCh - 1, 1)) + '…' : label)}</text>`;
     }
     const top = showHeader ? HEADER : 0;
     const kids = g.list.map(i => ({ ...i, value: i.cap }));
@@ -166,7 +176,7 @@ function render(items) {
     }
   }
   svg.innerHTML = out;
-  msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중`;
+  msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중` + (dupCount ? ` (중복 ${dupCount}행 제외)` : '');
 }
 
 /* ---------- 입력 처리 ---------- */
@@ -193,6 +203,7 @@ const SAMPLE = [
 function sampleItems() {
   return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE]);
 }
+document.getElementById('scale').oninput = () => lastItems.length && render(lastItems);
 document.getElementById('sample').onclick = () => render(sampleItems());
 
 document.getElementById('png').onclick = () => {
