@@ -27,19 +27,21 @@
   <h1>My Heat Map</h1>
   <label class="btn">Excel 파일 열기<input id="file" type="file" accept=".xlsx,.xls,.csv"></label>
   <button class="sec" id="sample">샘플 데이터 보기</button>
-  <button class="sec" id="png">PNG로 저장</button>
+  <button class="sec" id="png">PNG로 저장 (고해상도)</button>
+  <select id="sheet" style="display:none;padding:7px"></select>
   <label style="font-size:13px">색상 기준 ±<input id="scale" type="number" value="3" min="0.5" step="0.5" style="width:50px"/>%</label>
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
 </header>
 <div id="chips"></div>
-<div id="drop"><svg id="map" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div id="drop"><svg id="map" viewBox="0 0 2400 1350" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div class="help">
-  Excel 열 구성: <b>A</b>=분류(Group), <b>B</b>=Ticker, <b>C</b>=Market Cap, <b>D</b>=Change %. 첫 행은 제목 행으로 봅니다.<br>
+  Excel 열은 제목 이름으로 찾습니다: <b>Ticker</b>, <b>Market Cap</b>, <b>Change %</b>, <b>Industry Class III</b>(분류).
+  제목을 못 찾으면 A=Ticker, C=Market Cap, E=Change %, H=분류로 읽습니다. 시트가 여러 개면 위쪽 목록에서 고를 수 있습니다.<br>
   Change %는 <code>1.09</code>, <code>1.09%</code>, 또는 Excel의 % 서식(1.09%) 모두 인식합니다.
 </div>
 
 <script>
-const W = 1600, H = 900, HEADER = 30, GAP = 2;
+const W = 2400, H = 1350, HEADER = 45, GAP = 3, PNG_SCALE = 2;
 const svg = document.getElementById('map');
 const msg = document.getElementById('msg');
 
@@ -54,15 +56,31 @@ function num(v) {
   return parseFloat(s.replace('%', '')) * mult;
 }
 
-let dupCount = 0, lastItems = [];
-function rowsToItems(rows) {
+let dupCount = 0, lastItems = [], wb = null;
+
+// 제목 행에서 열 위치를 이름으로 찾음. 못 찾으면 A(Ticker) C(Market Cap) E(Change %) H(Class III)
+function findCols(head) {
+  const names = head.map(h => String(h == null ? '' : h).trim().toLowerCase());
+  const pick = (exact, loose, fallback) => {
+    let i = names.findIndex(n => exact.includes(n));
+    if (i < 0) i = names.findIndex(n => loose.some(l => n.startsWith(l)));
+    return i >= 0 ? i : fallback;
+  };
+  return {
+    t: pick(['ticker'], [], 0),
+    c: pick(['market cap'], ['market cap'], 2),
+    d: pick(['change %', 'change (%)'], ['change'], 4),
+    g: pick(['industry class iii', 'classification iii'], ['industry class iii', 'classification'], 7),
+  };
+}
+
+function rowsToItems(rows, col) {
   const items = [], seen = new Set();
   dupCount = 0;
   for (const r of rows.slice(1)) {
-    const [g, t, c, d] = r;
-    const cap = num(c);
+    const g = r[col.g], t = r[col.t], cap = num(r[col.c]);
     if (!g || !t || !(cap > 0)) continue;
-    let chg = num(d);
+    let chg = num(r[col.d]);
     if (isNaN(chg)) chg = 0;
     const key = String(g).trim() + '|' + String(t).trim();
     if (seen.has(key)) { dupCount++; continue; }   // 같은 분류의 같은 Ticker 중복 행은 1번만
@@ -72,24 +90,38 @@ function rowsToItems(rows) {
   return items;
 }
 
-function readWorkbook(buf) {
-  const wb = XLSX.read(buf, { type: 'array', cellNF: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
+function readSheet(name) {
+  const ws = wb.Sheets[name];
+  if (!ws || !ws['!ref']) return [];
   const range = XLSX.utils.decode_range(ws['!ref']);
   const rows = [];
   for (let R = range.s.r; R <= range.e.r; R++) {
     const row = [];
-    for (let C = 0; C < 4; C++) {
+    for (let C = 0; C <= range.e.c; C++) {
       const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
-      if (!cell) { row.push(null); continue; }
-      let v = cell.v;
-      // Excel의 % 서식 셀(0.0109 → 1.09%)은 100을 곱해서 % 단위로 맞춤
-      if (C === 3 && typeof v === 'number' && cell.z && String(cell.z).includes('%')) v *= 100;
-      row.push(v);
+      row.push(cell ? { v: cell.v, z: cell.z } : null);
     }
     rows.push(row);
   }
-  return rowsToItems(rows);
+  const col = findCols((rows[0] || []).map(c => c && c.v));
+  // Excel의 % 서식 셀(0.0109 → 1.09%)은 100을 곱해서 % 단위로 맞춤
+  const plain = rows.map((row, i) => row.map((c, j) => {
+    if (!c) return null;
+    if (i > 0 && j === col.d && typeof c.v === 'number' && c.z && String(c.z).includes('%')) return c.v * 100;
+    return c.v;
+  }));
+  return rowsToItems(plain, col);
+}
+
+function readWorkbook(buf) {
+  wb = XLSX.read(buf, { type: 'array', cellNF: true });
+  const sel = document.getElementById('sheet');
+  sel.innerHTML = wb.SheetNames.map(n => `<option>${esc(n)}</option>`).join('');
+  sel.style.display = wb.SheetNames.length > 1 ? '' : 'none';
+  // 데이터가 읽히는 첫 번째 시트를 기본으로 선택
+  const first = wb.SheetNames.find(n => readSheet(n).length > 0) || wb.SheetNames[0];
+  sel.value = first;
+  return readSheet(first);
 }
 
 /* ---------- Treemap (squarified) ---------- */
@@ -174,8 +206,8 @@ function render(all) {
     const label = g.name.toUpperCase();
     const avail = gw - 12;
     const cw = 0.68;                                 // 글자 1개의 대략적 폭(글자 크기 대비)
-    let fs = 20, lines = [label];                    // 그룹 이름 글자 크기: 기본 20, 좁으면 줄이고, 그래도 안 되면 2줄로
-    while (fs > 14 && label.length * fs * cw > avail) fs--;
+    let fs = 30, lines = [label];                    // 그룹 이름 글자 크기: 기본 20, 좁으면 줄이고, 그래도 안 되면 2줄로
+    while (fs > 21 && label.length * fs * cw > avail) fs--;
     if (label.length * fs * cw > avail) {
       const words = label.split(/(?<=[ /])/);        // 공백·'/' 뒤에서 줄바꿈
       let best = null;
@@ -184,16 +216,16 @@ function render(all) {
         const m = Math.max(l1.length, l2.length);
         if (!best || m < best.m) best = { m, l: [l1, l2] };
       }
-      if (best) { lines = best.l; fs = 14; }
+      if (best) { lines = best.l; fs = 21; }
     }
     const maxCh = Math.floor(avail / (fs * cw));
     lines = lines.map(t => t.length > maxCh ? t.slice(0, Math.max(maxCh - 1, 1)) + '…' : t);
-    const headH = lines.length > 1 ? HEADER + fs + 2 : HEADER;
+    const headH = lines.length > 1 ? HEADER + fs + 3 : HEADER;
     const showHeader = gh > headH + 12 && gw > 40;
     if (showHeader) {
       out += `<g><title>${esc(g.name)} · ${g.list.length}종목 · Market Cap ${g.value.toLocaleString()}</title>`;
       lines.forEach((t, i) => {
-        out += `<text x="${gx + 6}" y="${gy + 21 + i * (fs + 2)}" font-size="${fs}" font-weight="bold" fill="#fff">${esc(t)}</text>`;
+        out += `<text x="${gx + 6}" y="${gy + 32 + i * (fs + 3)}" font-size="${fs}" font-weight="bold" fill="#fff">${esc(t)}</text>`;
       });
       out += `</g>`;
     }
@@ -206,7 +238,7 @@ function render(all) {
       out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color(k.chg)}"/>`;
       const m = Math.min(w, h);
       if (m >= 14 && w >= 22) {
-        const fs = Math.max(8, Math.min(m * 0.32, w / (k.ticker.length * 0.7), 34));
+        const fs = Math.max(9, Math.min(m * 0.32, w / (k.ticker.length * 0.7), 52));
         const cx = x + w / 2, cy = y + h / 2;
         const showChg = h > fs * 2.1 && w > fs * 3.2;
         out += `<text x="${cx}" y="${showChg ? cy - fs * 0.1 : cy + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="bold" fill="#fff">${esc(k.ticker)}</text>`;
@@ -241,9 +273,13 @@ const SAMPLE = [
  ['Bank','JPM',600,0.71],['Bank','BAC',300,-1.39],['Bank','WFC',200,0.25],['Bank','C',120,-1.92],['Bank','GS',150,0.9],['Bank','MS',140,-0.4],
 ];
 function sampleItems() {
-  return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE]);
+  return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE], { g: 0, t: 1, c: 2, d: 3 });
 }
 document.getElementById('scale').oninput = () => lastItems.length && render(lastItems);
+document.getElementById('sheet').onchange = e => {
+  const items = readSheet(e.target.value);
+  items.length ? render(items) : (msg.textContent = '이 시트에서 읽을 수 있는 데이터가 없습니다.');
+};
 document.getElementById('sample').onclick = () => render(sampleItems());
 
 document.getElementById('png').onclick = () => {
@@ -251,11 +287,11 @@ document.getElementById('png').onclick = () => {
   const img = new Image();
   img.onload = () => {
     const c = document.createElement('canvas');
-    c.width = W * 2; c.height = H * 2;
+    c.width = W * PNG_SCALE; c.height = H * PNG_SCALE;
     const ctx = c.getContext('2d');
     ctx.drawImage(img, 0, 0, c.width, c.height);
     const a = document.createElement('a');
-    a.download = 'heatmap.png'; a.href = c.toDataURL('image/png'); a.click();
+    a.download = 'heatmap_' + W * PNG_SCALE + 'x' + H * PNG_SCALE + '.png'; a.href = c.toDataURL('image/png'); a.click();
   };
   img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
 };
