@@ -29,19 +29,19 @@
   <button class="sec" id="sample">샘플 데이터 보기</button>
   <button class="sec" id="png">PNG로 저장 (고해상도)</button>
   <select id="sheet" style="display:none;padding:7px"></select>
-  <label style="font-size:13px">색상 기준 ±<input id="scale" type="number" value="3" min="0.5" step="0.5" style="width:50px"/>%</label>
+  <label style="font-size:13px">가장 진한 색 ±<input id="scale" type="number" value="10" min="1" step="0.5" style="width:50px"/>%</label>
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
 </header>
 <div id="chips"></div>
-<div id="drop"><svg id="map" viewBox="0 0 2400 1350" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div id="drop"><svg id="map" viewBox="0 0 2400 1520" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div class="help">
-  Excel 열은 제목 이름으로 찾습니다: <b>Ticker</b>, <b>Market Cap</b>, <b>Change %</b>, <b>Industry Class III</b>(분류).
-  제목을 못 찾으면 A=Ticker, C=Market Cap, E=Change %, H=분류로 읽습니다. 시트가 여러 개면 위쪽 목록에서 고를 수 있습니다.<br>
-  Change %는 <code>1.09</code>, <code>1.09%</code>, 또는 Excel의 % 서식(1.09%) 모두 인식합니다.
+  Excel 열은 제목 이름으로 찾습니다: <b>Ticker</b>, <b>MKT Cap</b>(가장 오른쪽 열을 크기 기준으로 사용), <b>WK Change %</b>(또는 Change %), <b>Industry Class III</b>(분류).
+  제목 행은 위쪽 15행 안에서 자동으로 찾고, 못 찾으면 A=Ticker, C=Market Cap, E=Change %, H=분류로 읽습니다. 시트가 여러 개면 위쪽 목록에서 고를 수 있습니다.<br>
+  색상은 0%를 기준으로 ±3% / ±6.5% / ±10%에서 단계가 바뀌고, 그 사이는 부드럽게 이어집니다(맨 위 입력칸의 "가장 진한 색"으로 조절).
 </div>
 
 <script>
-const W = 2400, H = 1350, HEADER = 45, GAP = 3, PNG_SCALE = 2;
+const W = 2400, H = 1350, TOP = 80, BOT = 90, HT = TOP + H + BOT, HEADER = 45, GAP = 3, PNG_SCALE = 2;
 const svg = document.getElementById('map');
 const msg = document.getElementById('msg');
 
@@ -59,26 +59,27 @@ function num(v) {
 let dupCount = 0, lastItems = [], wb = null;
 
 // 제목 행에서 열 위치를 이름으로 찾음. 못 찾으면 A(Ticker) C(Market Cap) E(Change %) H(Class III)
+// 'MKT Cap'이 두 번 나오면(9/28, 10/2) 마지막 것(최근 날짜)을 크기 기준으로 씀.
 function findCols(head) {
   const names = head.map(h => String(h == null ? '' : h).trim().toLowerCase());
-  const pick = (exact, loose, fallback) => {
-    let i = names.findIndex(n => exact.includes(n));
-    if (i < 0) i = names.findIndex(n => loose.some(l => n.startsWith(l)));
-    return i >= 0 ? i : fallback;
-  };
+  const first = (test, fb) => { const i = names.findIndex(test); return i >= 0 ? i : fb; };
+  let c = -1;
+  names.forEach((n, i) => { if (n.startsWith('market cap') || n.startsWith('mkt cap')) c = i; });
   return {
-    t: pick(['ticker'], [], 0),
-    c: pick(['market cap'], ['market cap'], 2),
-    d: pick(['change %', 'change (%)'], ['change'], 4),
-    g: pick(['industry class iii', 'classification iii'], ['industry class iii', 'classification'], 7),
+    t: first(n => n === 'ticker', 0),
+    c: c >= 0 ? c : 2,
+    d: first(n => n.includes('change'), 4),
+    g: first(n => n === 'industry class iii' || n === 'classification iii' || n.startsWith('industry class iii'), 7),
+    unit: c >= 0 && names[c].includes('bil') ? 1e9 : 1,     // 'MKT Cap ($Bil.)'는 이미 십억 달러 단위
+    weekly: names.some(n => n.startsWith('wk change') || n.startsWith('weekly')),
   };
 }
 
-function rowsToItems(rows, col) {
+function rowsToItems(rows, col, headerIdx = 0) {
   const items = [], seen = new Set();
   dupCount = 0;
-  for (const r of rows.slice(1)) {
-    const g = r[col.g], t = r[col.t], cap = num(r[col.c]);
+  for (const r of rows.slice(headerIdx + 1)) {
+    const g = r[col.g], t = r[col.t], cap = num(r[col.c]) * (col.unit || 1);
     if (!g || !t || !(cap > 0)) continue;
     let chg = num(r[col.d]);
     if (isNaN(chg)) chg = 0;
@@ -90,6 +91,19 @@ function rowsToItems(rows, col) {
   return items;
 }
 
+// 위쪽 행의 (연, 월, 일) 숫자에서 기간을 읽음: 2026 9 28 ~~ 2026 10 2 → "2026-09-28 → 2026-10-02"
+function findPeriod(rows, headerIdx) {
+  for (let i = 0; i < headerIdx; i++) {
+    const n = rows[i].map(c => c && typeof c.v === 'number' ? c.v : null).filter(v => v != null);
+    if (n.length >= 6 && n[0] > 1900 && n[n.length - 3] > 1900) {
+      const f = a => `${a[0]}-${String(a[1]).padStart(2, '0')}-${String(a[2]).padStart(2, '0')}`;
+      return f(n.slice(0, 3)) + ' → ' + f(n.slice(-3));
+    }
+  }
+  return '';
+}
+
+let titleText = 'Biotech Heat Map';
 function readSheet(name) {
   const ws = wb.Sheets[name];
   if (!ws || !ws['!ref']) return [];
@@ -103,14 +117,20 @@ function readSheet(name) {
     }
     rows.push(row);
   }
-  const col = findCols((rows[0] || []).map(c => c && c.v));
+  // 'Ticker' 제목이 있는 첫 행(위쪽 15행 안)을 제목 행으로 사용
+  let hi = rows.slice(0, 15).findIndex(r => r.some(c => c && String(c.v).trim().toLowerCase() === 'ticker'));
+  if (hi < 0) hi = 0;
+  const col = findCols(rows[hi].map(c => c && c.v));
   // Excel의 % 서식 셀(0.0109 → 1.09%)은 100을 곱해서 % 단위로 맞춤
   const plain = rows.map((row, i) => row.map((c, j) => {
     if (!c) return null;
-    if (i > 0 && j === col.d && typeof c.v === 'number' && c.z && String(c.z).includes('%')) return c.v * 100;
+    if (i > hi && j === col.d && typeof c.v === 'number' && c.z && String(c.z).includes('%')) return c.v * 100;
     return c.v;
   }));
-  return rowsToItems(plain, col);
+  const items = rowsToItems(plain, col, hi);
+  const period = findPeriod(rows, hi);
+  titleText = (col.weekly ? 'Weekly Biotech Heat Map' : 'Biotech Heat Map') + (period ? '  (' + period + ')' : '');
+  return items;
 }
 
 function readWorkbook(buf) {
@@ -155,14 +175,24 @@ function squarify(nodes, x, y, w, h) {
 }
 
 /* ---------- 색상 (+ 초록, - 빨강, 0 근처 회색) ---------- */
-const SCALE = () => parseFloat(document.getElementById('scale').value) || 3;
+const SCALE = () => parseFloat(document.getElementById('scale').value) || 10;   // 가장 진한 색이 되는 변동률(%)
+// 색 단계: 0, ±30%, ±65%, ±100% 지점(기본 ±3 / ±6.5 / ±10%)의 색을 두고 그 사이는 부드럽게 이어 줌
+const STEPS = [0.3, 0.65, 1];
+const RED   = ['#414554', '#a1424b', '#d3383d', '#ff1f2b'];     // 0, -3, -6.5, -10
+const GREEN = ['#414554', '#2f7d4a', '#2faa52', '#2de06a'];     // 0, +3, +6.5, +10
+const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 function color(chg) {
-  const t = Math.min(Math.abs(chg) / SCALE(), 1);   // 기준 %에서 가장 진하게
-  const gray = [65, 69, 84];
-  const target = chg >= 0 ? [48, 204, 90] : [246, 53, 56];
-  if (chg === 0) return `rgb(${gray})`;
-  const c = gray.map((g, i) => Math.round(g + (target[i] - g) * (0.45 + 0.55 * t)));
-  return `rgb(${c})`;
+  const pal = (chg >= 0 ? GREEN : RED).map(hex2rgb);
+  const t = Math.min(Math.abs(chg) / SCALE(), 1);
+  const pts = [0, ...STEPS];
+  let k = 0;
+  while (k < pts.length - 2 && t > pts[k + 1]) k++;
+  const u = (t - pts[k]) / (pts[k + 1] - pts[k]);
+  return `rgb(${pal[k].map((v, i) => Math.round(v + (pal[k + 1][i] - v) * u))})`;
+}
+function legendStops() {   // 범례: -10 -6.5 -3 0 +3 +6.5 +10
+  const v = STEPS.map(s => +(s * SCALE()).toFixed(2)).reverse();
+  return [...v.map(x => -x), 0, ...v.slice().reverse()];
 }
 
 /* ---------- 그리기 ---------- */
@@ -199,7 +229,9 @@ function render(all) {
 
   squarify(groups, 0, 0, W, H);
 
-  let out = `<rect width="${W}" height="${H}" fill="#1b1d22"/>`;
+  let out = `<rect width="${W}" height="${HT}" fill="#1b1d22"/>`;
+  out += `<text x="14" y="54" font-size="44" font-weight="bold" fill="#fff">${esc(titleText)}</text>`;
+  out += `<g transform="translate(0,${TOP})">`;
   for (const g of groups) {
     const gx = g.x + GAP / 2, gy = g.y + GAP / 2, gw = g.w - GAP, gh = g.h - GAP;
     out += `<rect x="${gx}" y="${gy}" width="${gw}" height="${gh}" fill="#262a33"/>`;
@@ -228,7 +260,7 @@ function render(all) {
     const headH = HEADER + (lines.length - 1) * (fs + 3);
     const showHeader = gh > headH + 12 && gw > 40;
     if (showHeader) {
-      out += `<g><title>${esc(g.name)} · ${g.list.length}종목 · Market Cap ${g.value.toLocaleString()}</title>`;
+      out += `<g><title>${esc(g.name)} · ${g.list.length}종목 · Market Cap $${(g.value / 1e9).toFixed(1)} Bil.</title>`;
       lines.forEach((t, i) => {
         out += `<text x="${gx + 6}" y="${gy + 32 + i * (fs + 3)}" font-size="${fs}" font-weight="bold" fill="#fff">${esc(t)}</text>`;
       });
@@ -239,7 +271,7 @@ function render(all) {
     squarify(kids, gx + 1, gy + top + 1, gw - 2, gh - top - 2);
     for (const k of kids) {
       const x = k.x + 0.5, y = k.y + 0.5, w = k.w - 1, h = k.h - 1;
-      out += `<g><title>${esc(k.ticker)} ${fmt(k.chg)}\n${esc(g.name)} · Market Cap ${k.cap.toLocaleString()}</title>`;
+      out += `<g><title>${esc(k.ticker)} ${fmt(k.chg)}\n${esc(g.name)} · Market Cap $${(k.cap / 1e9).toFixed(2)} Bil.</title>`;
       out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color(k.chg)}"/>`;
       const m = Math.min(w, h);
       if (m >= 14 && w >= 22) {
@@ -252,6 +284,13 @@ function render(all) {
       out += `</g>`;
     }
   }
+  out += `</g>`;
+  const ls = legendStops(), bw = 170, bx = (W - bw * ls.length) / 2, by = TOP + H + 22;
+  out += `<text x="14" y="${by + 24}" font-size="22" fill="#aaa">Size: Market Cap · Color: change %</text>`;
+  ls.forEach((v, i) => {
+    out += `<rect x="${bx + i * bw}" y="${by}" width="${bw}" height="38" fill="${color(v)}"/>`;
+    out += `<text x="${bx + i * bw + bw / 2}" y="${by + 27}" text-anchor="middle" font-size="22" font-weight="bold" fill="#fff">${v > 0 ? '+' : ''}${v}%</text>`;
+  });
   svg.innerHTML = out;
   msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중` + (dupCount ? ` (중복 ${dupCount}행 제외)` : '') + (hidden.size ? ` · 숨긴 그룹 ${hidden.size}개` : '');
 }
@@ -278,6 +317,7 @@ const SAMPLE = [
  ['Bank','JPM',600,0.71],['Bank','BAC',300,-1.39],['Bank','WFC',200,0.25],['Bank','C',120,-1.92],['Bank','GS',150,0.9],['Bank','MS',140,-0.4],
 ];
 function sampleItems() {
+  titleText = 'Sample Heat Map';
   return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE], { g: 0, t: 1, c: 2, d: 3 });
 }
 document.getElementById('scale').oninput = () => lastItems.length && render(lastItems);
@@ -292,11 +332,11 @@ document.getElementById('png').onclick = () => {
   const img = new Image();
   img.onload = () => {
     const c = document.createElement('canvas');
-    c.width = W * PNG_SCALE; c.height = H * PNG_SCALE;
+    c.width = W * PNG_SCALE; c.height = HT * PNG_SCALE;
     const ctx = c.getContext('2d');
     ctx.drawImage(img, 0, 0, c.width, c.height);
     const a = document.createElement('a');
-    a.download = 'heatmap_' + W * PNG_SCALE + 'x' + H * PNG_SCALE + '.png'; a.href = c.toDataURL('image/png'); a.click();
+    a.download = 'heatmap_' + W * PNG_SCALE + 'x' + HT * PNG_SCALE + '.png'; a.href = c.toDataURL('image/png'); a.click();
   };
   img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
 };
