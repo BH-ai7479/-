@@ -274,12 +274,27 @@ function render(all) {
       out += `<g><title>${esc(k.ticker)} ${fmt(k.chg)}\n${esc(g.name)} · Market Cap $${(k.cap / 1e9).toFixed(2)} Bil.</title>`;
       out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color(k.chg)}"/>`;
       const m = Math.min(w, h);
-      if (m >= 14 && w >= 22) {
-        const fs = Math.max(9, Math.min(m * 0.32, w / (k.ticker.length * 0.7), 52));
-        const cx = x + w / 2, cy = y + h / 2;
-        const showChg = h > fs * 2.1 && w > fs * 3.2;
-        out += `<text x="${cx}" y="${showChg ? cy - fs * 0.1 : cy + fs * 0.35}" text-anchor="middle" font-size="${fs}" font-weight="bold" fill="#fff">${esc(k.ticker)}</text>`;
-        if (showChg) out += `<text x="${cx}" y="${cy + fs * 0.95}" text-anchor="middle" font-size="${fs * 0.72}" fill="#fff">${fmt(k.chg)}</text>`;
+      {
+        const chgTxt = fmt(k.chg);
+        const big = Math.min(m * 0.32, w / (k.ticker.length * 0.7), 52);
+        // Ticker 글자 크기(원래 크기). 아주 작은 사각형은 사각형에 맞춰 더 작게(최소 4.5 = PNG에서 약 9px)
+        const fsMax = big >= 9 ? big : Math.min(h * 0.65, (w - 1) / (k.ticker.length * 0.65), 9);
+        if (fsMax >= 4.5) {
+        // 변동률 줄이 들어갈 때까지 글자를 조금씩 줄여서, 가능한 한 모두 표시
+        let fs = fsMax, fc = 0, both = false;
+        for (let f = fsMax; f >= 5.5; f -= 0.5) {
+          const c = Math.min(f * 0.72, (w - 3) / (chgTxt.length * 0.6));   // 변동률 글자 크기(폭에 맞춤)
+          if (c >= 5.5 && f * 1.25 + c * 1.1 <= h - 2 && f * k.ticker.length * 0.7 <= w - 2) { fs = f; fc = c; both = true; break; }
+        }
+        const cx = x + w / 2;
+        if (both) {
+          const gap = fs * 0.2, top = y + (h - (fs + gap + fc)) / 2;
+          out += `<text x="${cx}" y="${top + fs * 0.8}" text-anchor="middle" font-size="${fs}" font-weight="bold" fill="#fff">${esc(k.ticker)}</text>`;
+          out += `<text x="${cx}" y="${top + fs + gap + fc * 0.8}" text-anchor="middle" font-size="${fc}" fill="#fff">${chgTxt}</text>`;
+        } else {
+          out += `<text x="${cx}" y="${y + h / 2 + fsMax * 0.35}" text-anchor="middle" font-size="${fsMax}" font-weight="bold" fill="#fff">${esc(k.ticker)}</text>`;
+        }
+        }
       }
       out += `</g>`;
     }
