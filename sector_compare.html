@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sector 비중 비교</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb; --zebra: #f4f3f0; --grid: #e4e3df; --axis: #bdbcb6;
+    --text: #0b0b0b; --text-2: #52514e; --text-3: #7a7974;
+    --a: #86b6ef;            /* 이전 분기: 파랑 연한 단계 */
+    --b: #256abf;            /* 이번 분기: 파랑 진한 단계 */
+    --up: #2a78d6; --down: #e34948;
+    --ref: #52514e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface: #1a1a19; --zebra: #222221; --grid: #333331; --axis: #5a5955;
+      --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
+      --a: #3d6ba8; --b: #6da7ec;
+      --up: #3987e5; --down: #e66767; --ref: #c3c2b7;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #1a1a19; --zebra: #222221; --grid: #333331; --axis: #5a5955;
+    --text: #ffffff; --text-2: #c3c2b7; --text-3: #8f8e86;
+    --a: #3d6ba8; --b: #6da7ec;
+    --up: #3987e5; --down: #e66767; --ref: #c3c2b7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface); color: var(--text);
+         font: 14px/1.5 -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif; }
+  main { max-width: 1600px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--text-2); margin: 0 0 20px; }
+  .kpis { display: flex; flex-wrap: wrap; gap: 12px 40px; margin: 0 0 18px; }
+  .kpi .v { font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .kpi .l { color: var(--text-2); font-size: 12px; }
+  ul.notes { margin: 0 0 20px; padding-left: 20px; color: var(--text); }
+  ul.notes li { margin: 3px 0; }
+  .wrap { position: relative; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { font-family: inherit; fill: var(--text-2); font-size: 13px; }
+  svg .t-label { fill: var(--text); font-size: 14px; }
+  svg .t-title { fill: var(--text); font-size: 15px; font-weight: 700; }
+  svg .t-sub { fill: var(--text-3); font-size: 12px; }
+  svg .t-val { fill: var(--text); font-size: 12px; font-variant-numeric: tabular-nums;
+               paint-order: stroke; stroke: var(--halo); stroke-width: 4px; stroke-linejoin: round; }   /* 점선·격자와 겹쳐도 읽히도록 행 배경색 테두리 */
+  svg .row:hover { --halo: var(--grid) !important; }
+  svg .t-tick { fill: var(--text-3); font-size: 11px; }
+  svg .zebra { fill: var(--zebra); }
+  svg .grid { stroke: var(--grid); stroke-width: 1; }
+  svg .axis { stroke: var(--axis); stroke-width: 1.5; }
+  svg .ref { stroke: var(--ref); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  svg .bar-a { fill: var(--a); } svg .bar-b { fill: var(--b); }
+  svg .up { fill: var(--up); } svg .down { fill: var(--down); }
+  svg .hit { fill: transparent; }
+  svg .row:hover .zebra-h { opacity: 1; }
+  svg .zebra-h { fill: var(--grid); opacity: 0; }
+  .tip { position: absolute; pointer-events: none; display: none; z-index: 5; min-width: 230px;
+         background: var(--surface); color: var(--text); border: 1px solid var(--axis); border-radius: 6px;
+         padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+  .tip b { font-size: 13px; }
+  .tip table { border-collapse: collapse; margin-top: 4px; width: 100%; }
+  .tip td { padding: 1px 0; font-variant-numeric: tabular-nums; }
+  .tip td:last-child { text-align: right; padding-left: 12px; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; color: var(--text-2); margin: 0 0 6px; font-size: 13px; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  h2 { font-size: 17px; margin: 32px 0 8px; }
+  .scroll { overflow-x: auto; }
+  table.data { border-collapse: collapse; width: 100%; min-width: 760px; font-variant-numeric: tabular-nums; }
+  table.data th, table.data td { padding: 7px 10px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  table.data th { color: var(--text-2); font-weight: 600; font-size: 12px; }
+  table.data tr.total td { font-weight: 700; border-top: 2px solid var(--axis); }
+  .foot { color: var(--text-3); font-size: 12px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="sub" id="sub"></p>
+  <div class="kpis" id="kpis"></div>
+  <ul class="notes" id="notes"></ul>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--a)"></i><span id="lgA"></span></span>
+    <span><i class="sw" style="background:var(--b)"></i><span id="lgB"></span></span>
+    <span><i class="sw" style="background:var(--up)"></i>증가 (비중 확대 / 시가총액 증가)</span>
+    <span><i class="sw" style="background:var(--down)"></i>감소 (비중 축소 / 시가총액 감소)</span>
+  </div>
+  <div class="wrap" id="wrap"><svg id="chart" role="img" aria-label="Sector별 비중 비교 차트"></svg><div class="tip" id="tip"></div></div>
+
+  <h2>표로 보기</h2>
+  <div class="scroll"><table class="data" id="tbl"></table></div>
+  <p class="foot" id="foot"></p>
+</main>
+
+<script>
+const D = {"a":{"date":"2025.12.31","total":73626922560.58},"b":{"date":"2026.09.30","total":77157728145.00986},"sectors":[{"name":"Information Technology","mvA":10840288827.370012,"mvB":10603741814.679998,"wA":14.723267590670597,"wB":13.742941983402336,"nA":213,"nB":221},{"name":"Industrials","mvA":12711815716.550005,"mvB":10730972502.120005,"wA":17.265173219878587,"wB":13.907838864763185,"nA":258,"nB":263},{"name":"Communication","mvA":1988946599.89,"mvB":1894932402.0999992,"wA":2.7013849427884224,"wB":2.4559204212683303,"nA":80,"nB":75},{"name":"Health Care","mvA":13743772227.049992,"mvB":15984263967.600021,"wA":18.666775343953372,"wB":20.716348643079893,"nA":404,"nB":442},{"name":"Materials","mvA":3234353160.67,"mvB":3197274432.6000004,"wA":4.392894675190022,"wB":4.143816192450688,"nA":83,"nB":91},{"name":"Financials","mvA":12996669225.560001,"mvB":14543460641.649998,"wA":17.652060922234504,"wB":18.849000600843365,"nA":422,"nB":402},{"name":"Real Estate","mvA":4160413506.5599985,"mvB":4374409187.110002,"wA":5.650668752502623,"wB":5.669437517507978,"nA":105,"nB":94},{"name":"Utilities","mvA":2209158814.4400005,"mvB":2091862131.8499997,"wA":3.0004769147078116,"wB":2.7111504992974447,"nA":31,"nB":30},{"name":"Cash and/or Derivatives","mvA":276019588.38,"mvB":274245486.06999993,"wA":0.37488948170133274,"wB":0.35543488988502137,"nA":6,"nB":6},{"name":"Consumer Discretionary","mvA":6594228300.559994,"mvB":6795714668.55,"wA":8.956273155562469,"wB":8.80756190200179,"nA":199,"nB":203},{"name":"Energy","mvA":3523545630.920002,"mvB":5166032467.33,"wA":4.7856755496209145,"wB":6.695418063140718,"nA":105,"nB":110},{"name":"Consumer Staples","mvA":1347710962.6300004,"mvB":1500818443.3500004,"wA":1.83045945118935,"wB":1.945130422359468,"nA":61,"nB":55}]};
+
+/* ---------- 계산 ---------- */
+const CASH = 'Cash and/or Derivatives';
+const short = n => n === CASH ? 'Cash/Derivatives' : n;
+const totA = D.a.total, totB = D.b.total;
+const growthTotal = (totB / totA - 1) * 100;
+const S = D.sectors.map(s => ({ ...s, dW: s.wB - s.wA, g: s.mvA ? (s.mvB / s.mvA - 1) * 100 : NaN }));
+S.sort((x, y) => (x.name === CASH) - (y.name === CASH) || y.wB - x.wB);   // 이번 분기 비중 큰 순, Cash는 맨 아래
+const eq = S.filter(s => s.name !== CASH);
+
+const fmt = (v, d = 2) => v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const sgn = (v, d = 2) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v), d);
+const bil = v => '$' + fmt(v / 1e9) + 'B';
+const dateA = D.a.date, dateB = D.b.date;
+
+/* ---------- 머리글 / KPI / 요약 ---------- */
+document.getElementById('title').textContent = 'iShares Russell 2000 ETF · Sector 비중 비교';
+document.getElementById('sub').textContent = `${dateA} (4Q) → ${dateB} (3Q) · 섹터별 Market Value 합계 기준 (현금·파생 포함 전체 100%)`;
+document.getElementById('lgA').textContent = dateA + ' (4Q)';
+document.getElementById('lgB').textContent = dateB + ' (3Q)';
+document.getElementById('kpis').innerHTML = [
+  [bil(totA), `${dateA} 총 Market Value`],
+  [bil(totB), `${dateB} 총 Market Value`],
+  [sgn(growthTotal, 1) + '%', 'ETF 전체 증감률'],
+].map(([v, l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+
+const up = eq.slice().sort((x, y) => y.dW - x.dW).slice(0, 3);
+const dn = eq.slice().sort((x, y) => x.dW - y.dW).slice(0, 3);
+const gr = eq.slice().sort((x, y) => y.g - x.g)[0];
+const lo = eq.slice().sort((x, y) => x.g - y.g)[0];
+const line = a => a.map(s => `${s.name} ${sgn(s.dW)}%p`).join(', ');
+document.getElementById('notes').innerHTML = [
+  `<b>비중 확대 Top 3</b>: ${line(up)}`,
+  `<b>비중 축소 Top 3</b>: ${line(dn)}`,
+  `<b>시가총액 증감률</b>: 최대 ${gr.name} ${sgn(gr.g, 1)}%, 최소 ${lo.name} ${sgn(lo.g, 1)}% (ETF 전체 ${sgn(growthTotal, 1)}%). 전체보다 더 늘어난 섹터는 비중이 커지고, 덜 늘었거나 줄어든 섹터는 비중이 작아집니다.`,
+].map(t => `<li>${t}</li>`).join('');
+
+/* ---------- 차트 ---------- */
+const W = 1600, ROW = 46, TOP = 78, BOT = 36, H = TOP + ROW * S.length + BOT;
+const LBL_X = 200;                                   // 섹터 이름 오른쪽 끝
+const P1 = [220, 690], P2 = [790, 1130], P3 = [1230, 1580];   // 패널 3개의 가로 범위
+const svg = document.getElementById('chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+function niceStep(range, n = 5) {
+  const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  return [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= raw);
+}
+function ticksFor(lo, hi) {
+  const st = niceStep(hi - lo), t = [];
+  for (let v = Math.ceil(lo / st) * st; v <= hi + 1e-9; v += st) t.push(+v.toFixed(6));
+  return t;
+}
+const scale = (dom, rng) => v => rng[0] + (v - dom[0]) / (dom[1] - dom[0]) * (rng[1] - rng[0]);
+
+// 데이터 끝이 둥근 가로 막대 (기준선 쪽은 직각)
+function hbar(x0, x1, y, h, cls) {
+  const L = Math.min(x0, x1), R = Math.max(x0, x1), w = R - L;
+  if (w < 0.5) return '';
+  const r = Math.min(4, w / 2, h / 2);
+  const pos = x1 >= x0;
+  const d = pos
+    ? `M${L},${y} H${R - r} Q${R},${y} ${R},${y + r} V${y + h - r} Q${R},${y + h} ${R - r},${y + h} H${L} Z`
+    : `M${R},${y} H${L + r} Q${L},${y} ${L},${y + r} V${y + h - r} Q${L},${y + h} ${L + r},${y + h} H${R} Z`;
+  return `<path class="${cls}" d="${d}"/>`;
+}
+
+const maxW = Math.max(...S.flatMap(s => [s.wA, s.wB]));
+const d1 = [0, Math.ceil((maxW * 1.18) / 5) * 5];
+const mDW = Math.max(...S.map(s => Math.abs(s.dW)));
+const padW = mDW * 0.38 + 0.2;
+const d2 = [-(Math.ceil((mDW + padW) * 2) / 2), Math.ceil((mDW + padW) * 2) / 2];
+const gLo = Math.min(0, ...S.map(s => s.g), growthTotal), gHi = Math.max(0, ...S.map(s => s.g), growthTotal);
+const gPad = (gHi - gLo) * 0.2;
+const d3 = [Math.floor((gLo - gPad) / 10) * 10, Math.ceil((gHi + gPad) / 10) * 10];
+const x1 = scale(d1, P1), x2 = scale(d2, P2), x3 = scale(d3, P3);
+
+let o = '';
+// 행 배경(줄무늬) - 세 패널을 가로질러 같은 섹터를 따라 읽도록
+S.forEach((s, i) => { if (i % 2 === 0) o += `<rect class="zebra" x="0" y="${TOP + i * ROW}" width="${W}" height="${ROW}"/>`; });
+// 패널 제목
+o += `<text class="t-title" x="${P1[0]}" y="28">섹터 비중 (%)</text><text class="t-sub" x="${P1[0]}" y="46">Market Value ÷ ETF 총 Market Value</text>`;
+o += `<text class="t-title" x="${P2[0]}" y="28">비중 변화 (%p)</text><text class="t-sub" x="${P2[0]}" y="46">${dateB} 비중 − ${dateA} 비중</text>`;
+o += `<text class="t-title" x="${P3[0]}" y="28">시가총액 증감률 (%)</text><text class="t-sub" x="${P3[0]}" y="46">섹터 Market Value 합계의 변화율</text>`;
+// 격자 + 눈금
+const yb = TOP + ROW * S.length;
+[[d1, x1, 0], [d2, x2, 1], [d3, x3, 2]].forEach(([dom, sc, k]) => {
+  ticksFor(dom[0], dom[1]).forEach(t => {
+    const x = sc(t), zero = (k > 0 && t === 0);
+    o += `<line class="${zero ? 'axis' : 'grid'}" x1="${x}" x2="${x}" y1="${TOP}" y2="${yb}"/>`;
+    o += `<text class="t-tick" x="${x}" y="${yb + 18}" text-anchor="middle">${k === 0 ? t : (t > 0 ? '+' : t < 0 ? '−' : '') + Math.abs(t)}</text>`;
+  });
+});
+o += `<line class="axis" x1="${x1(0)}" x2="${x1(0)}" y1="${TOP}" y2="${yb}"/>`;
+// ETF 전체 증감률 기준선 (패널 3)
+o += `<line class="ref" x1="${x3(growthTotal)}" x2="${x3(growthTotal)}" y1="${TOP - 6}" y2="${yb}"/>`;
+o += `<text class="t-sub" x="${x3(growthTotal) + 6}" y="${TOP - 10}" style="fill:var(--ref)">ETF 전체 ${sgn(growthTotal, 1)}%</text>`;
+
+// 행: 라벨 + 막대 + 값 + 호버 영역
+S.forEach((s, i) => {
+  const y = TOP + i * ROW, mid = y + ROW / 2;
+  o += `<g class="row" data-i="${i}" style="--halo:${i % 2 === 0 ? 'var(--zebra)' : 'var(--surface)'}">`;
+  o += `<rect class="zebra-h" x="0" y="${y}" width="${W}" height="${ROW}"/>`;
+  o += `<text class="t-label" x="${LBL_X}" y="${mid + 5}" text-anchor="end">${short(s.name)}</text>`;
+  // 패널 1: 이전/이번 분기 비중 (같은 파랑 계열의 연/진 두 단계)
+  o += hbar(x1(0), x1(s.wA), mid - 15, 14, 'bar-a') + `<text class="t-val" x="${x1(s.wA) + 6}" y="${mid - 4}">${fmt(s.wA)}%</text>`;
+  o += hbar(x1(0), x1(s.wB), mid + 1, 14, 'bar-b') + `<text class="t-val" x="${x1(s.wB) + 6}" y="${mid + 12}">${fmt(s.wB)}%</text>`;
+  // 패널 2: 비중 변화 (증가 파랑 / 감소 빨강)
+  o += hbar(x2(0), x2(s.dW), mid - 9, 18, s.dW >= 0 ? 'up' : 'down');
+  o += `<text class="t-val" x="${s.dW >= 0 ? x2(s.dW) + 6 : x2(s.dW) - 6}" y="${mid + 4}" text-anchor="${s.dW >= 0 ? 'start' : 'end'}">${sgn(s.dW)}%p</text>`;
+  // 패널 3: 증감률
+  o += hbar(x3(0), x3(s.g), mid - 9, 18, s.g >= 0 ? 'up' : 'down');
+  o += `<text class="t-val" x="${s.g >= 0 ? x3(s.g) + 6 : x3(s.g) - 6}" y="${mid + 4}" text-anchor="${s.g >= 0 ? 'start' : 'end'}">${sgn(s.g, 1)}%</text>`;
+  o += `<rect class="hit" x="0" y="${y}" width="${W}" height="${ROW}"/></g>`;
+});
+svg.innerHTML = o;
+
+/* ---------- 마우스 툴팁 ---------- */
+const tip = document.getElementById('tip'), wrap = document.getElementById('wrap');
+svg.addEventListener('mousemove', e => {
+  const row = e.target.closest('.row');
+  if (!row) { tip.style.display = 'none'; return; }
+  const s = S[+row.dataset.i];
+  tip.innerHTML = `<b>${s.name}</b><table>
+    <tr><td>${dateA} 비중</td><td>${fmt(s.wA)}% · ${bil(s.mvA)} · ${s.nA}종목</td></tr>
+    <tr><td>${dateB} 비중</td><td>${fmt(s.wB)}% · ${bil(s.mvB)} · ${s.nB}종목</td></tr>
+    <tr><td>비중 변화</td><td>${sgn(s.dW)}%p</td></tr>
+    <tr><td>시가총액 증감률</td><td>${sgn(s.g, 1)}%</td></tr></table>`;
+  tip.style.display = 'block';
+  const r = wrap.getBoundingClientRect();
+  tip.style.left = Math.min(e.clientX - r.left + 14, r.width - tip.offsetWidth - 4) + 'px';
+  tip.style.top = (e.clientY - r.top + 14) + 'px';
+});
+svg.addEventListener('mouseleave', () => tip.style.display = 'none');
+
+/* ---------- 표 ---------- */
+document.getElementById('tbl').innerHTML =
+  `<thead><tr><th>Sector</th><th>${dateA}<br>Market Value</th><th>${dateA}<br>비중</th><th>${dateB}<br>Market Value</th><th>${dateB}<br>비중</th><th>비중 변화</th><th>증감률</th></tr></thead><tbody>` +
+  S.map(s => `<tr><td>${s.name}</td><td>${bil(s.mvA)}</td><td>${fmt(s.wA)}%</td><td>${bil(s.mvB)}</td><td>${fmt(s.wB)}%</td><td>${sgn(s.dW)}%p</td><td>${sgn(s.g, 1)}%</td></tr>`).join('') +
+  `<tr class="total"><td>합계</td><td>${bil(totA)}</td><td>100.00%</td><td>${bil(totB)}</td><td>100.00%</td><td></td><td>${sgn(growthTotal, 1)}%</td></tr></tbody>`;
+document.getElementById('foot').textContent =
+  '비중은 섹터별 Market Value 합계 ÷ 파일 전체 Market Value 합계로 계산했으며, 파일의 Weight(%) 열 합계와 ±0.05%p 이내로 일치합니다. 증감률은 보유종목 가격 변동뿐 아니라 ETF의 자금 유출입과 편입 종목 변화도 포함한 값입니다.';
+</script>
+</body>
+</html>
