@@ -97,7 +97,8 @@ function findPeriod(rows, headerIdx) {
     const n = rows[i].map(c => c && typeof c.v === 'number' ? c.v : null).filter(v => v != null);
     if (n.length >= 6 && n[0] > 1900 && n[n.length - 3] > 1900) {
       const f = a => `${a[0]}-${String(a[1]).padStart(2, '0')}-${String(a[2]).padStart(2, '0')}`;
-      return f(n.slice(0, 3)) + ' → ' + f(n.slice(-3));
+      const from = f(n.slice(0, 3)), to = f(n.slice(-3));
+      return from === to ? from : from + ' → ' + to;     // 시작·끝 날짜가 같으면 한 번만 표시
     }
   }
   return '';
@@ -246,7 +247,7 @@ function render(all) {
     if (label.length * fs * cw > avail) {
       const tokens = [...g.name.toUpperCase().split(/(?<=[ /])/).map(t => t.trimEnd()), capTxt];   // 공백·'/' 뒤에서 줄바꿈, 금액은 한 덩어리
       const longest = Math.max(...tokens.map(t => t.length));
-      while (fs > 15 && longest * fs * cw > avail) fs--;   // 가장 긴 단어(금액 포함)가 잘리지 않도록 글자를 더 줄임
+      while (fs > 11 && longest * fs * cw > avail) fs--;   // 가장 긴 단어(금액 포함)가 잘리지 않도록 글자를 더 줄임
       const maxCh = Math.max(Math.floor(avail / (fs * cw)), 3);
       lines = [];
       for (const t of tokens) {
