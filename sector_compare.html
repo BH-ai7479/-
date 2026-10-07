@@ -36,6 +36,7 @@
   main { max-width: 1600px; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { font-size: 24px; margin: 0 0 4px; }
   .sub { color: var(--text-2); margin: 0 0 20px; }
+  .warn { margin: -12px 0 18px; padding: 8px 12px; border-left: 3px solid var(--down); background: var(--zebra); color: var(--text-2); font-size: 13px; }
   .kpis { display: flex; flex-wrap: wrap; gap: 12px 40px; margin: 0 0 18px; }
   .kpi .v { font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
   .kpi .l { color: var(--text-2); font-size: 12px; }
@@ -83,6 +84,7 @@
 <main>
   <h1 id="title"></h1>
   <p class="sub" id="sub"></p>
+  <p class="warn" id="warn" hidden></p>
   <div class="kpis" id="kpis"></div>
   <ul class="notes" id="notes"></ul>
   <div class="legend">
@@ -93,13 +95,15 @@
   </div>
   <div class="wrap" id="wrap"><svg id="chart" role="img" aria-label="Sector별 비중 비교 차트"></svg><div class="tip" id="tip"></div></div>
 
+  <section id="tblSec">
   <h2>표로 보기</h2>
   <div class="scroll"><table class="data" id="tbl"></table></div>
   <p class="foot" id="foot"></p>
+  </section>
 </main>
 
 <script>
-const D = {"a":{"date":"2025.12.31","total":73626922560.58},"b":{"date":"2026.09.30","total":77157728145.00986},"sectors":[{"name":"Information Technology","mvA":10840288827.370012,"mvB":10603741814.679998,"wA":14.723267590670597,"wB":13.742941983402336,"nA":213,"nB":221},{"name":"Industrials","mvA":12711815716.550005,"mvB":10730972502.120005,"wA":17.265173219878587,"wB":13.907838864763185,"nA":258,"nB":263},{"name":"Communication","mvA":1988946599.89,"mvB":1894932402.0999992,"wA":2.7013849427884224,"wB":2.4559204212683303,"nA":80,"nB":75},{"name":"Health Care","mvA":13743772227.049992,"mvB":15984263967.600021,"wA":18.666775343953372,"wB":20.716348643079893,"nA":404,"nB":442},{"name":"Materials","mvA":3234353160.67,"mvB":3197274432.6000004,"wA":4.392894675190022,"wB":4.143816192450688,"nA":83,"nB":91},{"name":"Financials","mvA":12996669225.560001,"mvB":14543460641.649998,"wA":17.652060922234504,"wB":18.849000600843365,"nA":422,"nB":402},{"name":"Real Estate","mvA":4160413506.5599985,"mvB":4374409187.110002,"wA":5.650668752502623,"wB":5.669437517507978,"nA":105,"nB":94},{"name":"Utilities","mvA":2209158814.4400005,"mvB":2091862131.8499997,"wA":3.0004769147078116,"wB":2.7111504992974447,"nA":31,"nB":30},{"name":"Cash and/or Derivatives","mvA":276019588.38,"mvB":274245486.06999993,"wA":0.37488948170133274,"wB":0.35543488988502137,"nA":6,"nB":6},{"name":"Consumer Discretionary","mvA":6594228300.559994,"mvB":6795714668.55,"wA":8.956273155562469,"wB":8.80756190200179,"nA":199,"nB":203},{"name":"Energy","mvA":3523545630.920002,"mvB":5166032467.33,"wA":4.7856755496209145,"wB":6.695418063140718,"nA":105,"nB":110},{"name":"Consumer Staples","mvA":1347710962.6300004,"mvB":1500818443.3500004,"wA":1.83045945118935,"wB":1.945130422359468,"nA":61,"nB":55}]};
+const D = {"a":{"date":"2025.12.31","total":73626922560.58,"label":"4Q"},"b":{"date":"2026.09.30","total":77157728145.00986,"label":"3Q"},"sectors":[{"name":"Information Technology","mvA":10840288827.370012,"mvB":10603741814.679998,"wA":14.723267590670597,"wB":13.742941983402336,"nA":213,"nB":221},{"name":"Industrials","mvA":12711815716.550005,"mvB":10730972502.120005,"wA":17.265173219878587,"wB":13.907838864763185,"nA":258,"nB":263},{"name":"Communication","mvA":1988946599.89,"mvB":1894932402.0999992,"wA":2.7013849427884224,"wB":2.4559204212683303,"nA":80,"nB":75},{"name":"Health Care","mvA":13743772227.049992,"mvB":15984263967.600021,"wA":18.666775343953372,"wB":20.716348643079893,"nA":404,"nB":442},{"name":"Materials","mvA":3234353160.67,"mvB":3197274432.6000004,"wA":4.392894675190022,"wB":4.143816192450688,"nA":83,"nB":91},{"name":"Financials","mvA":12996669225.560001,"mvB":14543460641.649998,"wA":17.652060922234504,"wB":18.849000600843365,"nA":422,"nB":402},{"name":"Real Estate","mvA":4160413506.5599985,"mvB":4374409187.110002,"wA":5.650668752502623,"wB":5.669437517507978,"nA":105,"nB":94},{"name":"Utilities","mvA":2209158814.4400005,"mvB":2091862131.8499997,"wA":3.0004769147078116,"wB":2.7111504992974447,"nA":31,"nB":30},{"name":"Cash and/or Derivatives","mvA":276019588.38,"mvB":274245486.06999993,"wA":0.37488948170133274,"wB":0.35543488988502137,"nA":6,"nB":6},{"name":"Consumer Discretionary","mvA":6594228300.559994,"mvB":6795714668.55,"wA":8.956273155562469,"wB":8.80756190200179,"nA":199,"nB":203},{"name":"Energy","mvA":3523545630.920002,"mvB":5166032467.33,"wA":4.7856755496209145,"wB":6.695418063140718,"nA":105,"nB":110},{"name":"Consumer Staples","mvA":1347710962.6300004,"mvB":1500818443.3500004,"wA":1.83045945118935,"wB":1.945130422359468,"nA":61,"nB":55}],"showTable":false};
 
 /* ---------- 계산 ---------- */
 const CASH = 'Cash and/or Derivatives';
@@ -114,16 +118,19 @@ const fmt = (v, d = 2) => v.toLocaleString('en-US', { minimumFractionDigits: d, 
 const sgn = (v, d = 2) => (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v), d);
 const bil = v => '$' + fmt(v / 1e9) + 'B';
 const dateA = D.a.date, dateB = D.b.date;
+const labA = D.a.label || '4Q', labB = D.b.label || '3Q';
+const TOTAL = D.totalName || 'ETF 전체';
 
 /* ---------- 머리글 / KPI / 요약 ---------- */
 document.getElementById('title').textContent = 'iShares Russell 2000 ETF · Sector 비중 비교';
-document.getElementById('sub').textContent = `${dateA} (4Q) → ${dateB} (3Q) · 섹터별 Market Value 합계 기준 (현금·파생 포함 전체 100%)`;
-document.getElementById('lgA').textContent = dateA + ' (4Q)';
-document.getElementById('lgB').textContent = dateB + ' (3Q)';
+document.getElementById('sub').textContent = `${dateA} (${labA}) → ${dateB} (${labB}) · ` + (D.basis || '섹터별 Market Value 합계 기준 (현금·파생 포함 전체 100%)');
+document.getElementById('lgA').textContent = `${dateA} (${labA})`;
+document.getElementById('lgB').textContent = `${dateB} (${labB})`;
+if (D.note) { const w = document.getElementById('warn'); w.textContent = D.note; w.hidden = false; }
 document.getElementById('kpis').innerHTML = [
   [bil(totA), `${dateA} 총 Market Value`],
   [bil(totB), `${dateB} 총 Market Value`],
-  [sgn(growthTotal, 1) + '%', 'ETF 전체 증감률'],
+  [sgn(growthTotal, 1) + '%', TOTAL + ' 증감률'],
 ].map(([v, l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
 
 const up = eq.slice().sort((x, y) => y.dW - x.dW).slice(0, 3);
@@ -134,7 +141,7 @@ const line = a => a.map(s => `${s.name} ${sgn(s.dW)}%p`).join(', ');
 document.getElementById('notes').innerHTML = [
   `<b>비중 확대 Top 3</b>: ${line(up)}`,
   `<b>비중 축소 Top 3</b>: ${line(dn)}`,
-  `<b>시가총액 증감률</b>: 최대 ${gr.name} ${sgn(gr.g, 1)}%, 최소 ${lo.name} ${sgn(lo.g, 1)}% (ETF 전체 ${sgn(growthTotal, 1)}%). 전체보다 더 늘어난 섹터는 비중이 커지고, 덜 늘었거나 줄어든 섹터는 비중이 작아집니다.`,
+  `<b>시가총액 증감률</b>: 최대 ${gr.name} ${sgn(gr.g, 1)}%, 최소 ${lo.name} ${sgn(lo.g, 1)}% (${TOTAL} ${sgn(growthTotal, 1)}%). 전체보다 더 늘어난 섹터는 비중이 커지고, 덜 늘었거나 줄어든 섹터는 비중이 작아집니다.`,
 ].map(t => `<li>${t}</li>`).join('');
 
 /* ---------- 차트 ---------- */
@@ -196,7 +203,7 @@ const yb = TOP + ROW * S.length;
 o += `<line class="axis" x1="${x1(0)}" x2="${x1(0)}" y1="${TOP}" y2="${yb}"/>`;
 // ETF 전체 증감률 기준선 (패널 3)
 o += `<line class="ref" x1="${x3(growthTotal)}" x2="${x3(growthTotal)}" y1="${TOP - 6}" y2="${yb}"/>`;
-o += `<text class="t-sub" x="${x3(growthTotal) + 6}" y="${TOP - 10}" style="fill:var(--ref)">ETF 전체 ${sgn(growthTotal, 1)}%</text>`;
+o += `<text class="t-sub" x="${x3(growthTotal) + 6}" y="${TOP - 10}" style="fill:var(--ref)">${TOTAL} ${sgn(growthTotal, 1)}%</text>`;
 
 // 행: 라벨 + 막대 + 값 + 호버 영역
 S.forEach((s, i) => {
@@ -224,8 +231,8 @@ svg.addEventListener('mousemove', e => {
   if (!row) { tip.style.display = 'none'; return; }
   const s = S[+row.dataset.i];
   tip.innerHTML = `<b>${s.name}</b><table>
-    <tr><td>${dateA} 비중</td><td>${fmt(s.wA)}% · ${bil(s.mvA)} · ${s.nA}종목</td></tr>
-    <tr><td>${dateB} 비중</td><td>${fmt(s.wB)}% · ${bil(s.mvB)} · ${s.nB}종목</td></tr>
+    <tr><td>${labA} 비중</td><td>${fmt(s.wA)}% · ${bil(s.mvA)}${s.nA ? ' · ' + s.nA + '종목' : ''}</td></tr>
+    <tr><td>${labB} 비중</td><td>${fmt(s.wB)}% · ${bil(s.mvB)}${s.nB ? ' · ' + s.nB + '종목' : ''}</td></tr>
     <tr><td>비중 변화</td><td>${sgn(s.dW)}%p</td></tr>
     <tr><td>시가총액 증감률</td><td>${sgn(s.g, 1)}%</td></tr></table>`;
   tip.style.display = 'block';
@@ -240,6 +247,7 @@ document.getElementById('tbl').innerHTML =
   `<thead><tr><th>Sector</th><th>${dateA}<br>Market Value</th><th>${dateA}<br>비중</th><th>${dateB}<br>Market Value</th><th>${dateB}<br>비중</th><th>비중 변화</th><th>증감률</th></tr></thead><tbody>` +
   S.map(s => `<tr><td>${s.name}</td><td>${bil(s.mvA)}</td><td>${fmt(s.wA)}%</td><td>${bil(s.mvB)}</td><td>${fmt(s.wB)}%</td><td>${sgn(s.dW)}%p</td><td>${sgn(s.g, 1)}%</td></tr>`).join('') +
   `<tr class="total"><td>합계</td><td>${bil(totA)}</td><td>100.00%</td><td>${bil(totB)}</td><td>100.00%</td><td></td><td>${sgn(growthTotal, 1)}%</td></tr></tbody>`;
+if (D.showTable === false) document.getElementById('tblSec').hidden = true;
 document.getElementById('foot').textContent =
   '비중은 섹터별 Market Value 합계 ÷ 파일 전체 Market Value 합계로 계산했으며, 파일의 Weight(%) 열 합계와 ±0.05%p 이내로 일치합니다. 증감률은 보유종목 가격 변동뿐 아니라 ETF의 자금 유출입과 편입 종목 변화도 포함한 값입니다.';
 </script>
