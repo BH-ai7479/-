@@ -3,17 +3,17 @@
 <title>KOSDAQ 바이오/헬스케어 종목별 시가총액 변화</title>
 <style>body{margin:0;background:#fff;color:#222;font-family:Arial,"Malgun Gothic","Noto Sans CJK KR",sans-serif}
 svg{display:block;width:100%;height:auto}</style></head><body>
-<svg id="c" viewBox="0 0 2400 1600" xmlns="http://www.w3.org/2000/svg"></svg>
+<svg id="c" viewBox="0 0 2160 1600" xmlns="http://www.w3.org/2000/svg"></svg>
 <script>
 // [종목명, 2026-01-02 시총(W Bil.), 2026-10-08 시총(W Bil.)]  출처: 엑셀 첫 번째 탭, 컬럼 K = 바이오/헬스케어, 1/2 시총 순
 const D = [["알테오젠",24486.4,16786.9],["ABL바이오",10945.5,2687.4],["HLB",7046.2,6080.5],["리가켐바이오",6322.9,2713.5],["펩트론",5759.4,2133.5],["삼천당제약",5735.4,5711.9],["파마리서치",4509.1,3142.9],["디앤디파마텍",4089.1,1970.9],["보로노이",4002.6,2576.5],["케어젠",3964.2,2245.3],["클래시스",3822.8,1979.9],["에임드바이오",3563.0,1579.6],["올릭스",3197.9,2683.2],["휴젤",2941.1,2287.8],["셀트리온제약",2748.5,1722.8],["오름테라퓨틱",2475.5,419.2],["에스티팜",2400.8,1939.4],["엘앤씨바이오",1853.5,1729.8],["오스코텍",1656.6,1442.3],["루닛",1532.1,846.6],["네이처셀",1430.5,1581.9],["HK이노엔",1412.2,1124.7],["젬백스",1391.7,478.9],["차바이오텍",1380.6,762.4],["씨젠",1142.7,1782.9],["GI이노베이션",1092.9,545.8],["큐렉소",561.1,355.7],["HDBio",496.0,668.8]];
-const GREEN='#2fb35a', RED='#e0343c', LIGHT='#b3bccd', DARK='#2b3550', INK='#1b1d22', F='font-family="Arial, Malgun Gothic, Noto Sans CJK KR, sans-serif"';
+const GREEN='#2fb35a', RED='#e0343c', LIGHT='#9e1b2a', DARK='#17408f', INK='#1b1d22', F='font-family="Arial, Malgun Gothic, Noto Sans CJK KR, sans-serif"';
 const fmt = v => Math.round(v).toLocaleString();
 const sg = v => (v>=0?'+':'-') + fmt(Math.abs(v));
 const pc = v => (v>=0?'+':'') + v.toFixed(1) + '%';
 const A = D.reduce((s,x)=>s+x[1],0), B = D.reduce((s,x)=>s+x[2],0);
 const T = (x,y,s,t,c=INK,w='normal',a='start') => `<text x="${x}" y="${y}" font-size="${s}" font-weight="${w}" fill="${c}" text-anchor="${a}" ${F}>${t}</text>`;
-let o = '<rect width="2400" height="1600" fill="#ffffff"/>';
+let o = '<rect width="2160" height="1600" fill="#ffffff"/>';
 o += T(40,64,44,'바이오/헬스케어 종목별 시가총액 변화 (2026-01-02 → 2026-10-08)',INK,'bold');
 const up = D.filter(x=>x[2]>x[1]).length;
 o += T(40,104,24,`${D.length}종목 합계 ${fmt(A)} → ${fmt(B)} (W Bil.)  ${pc((B/A-1)*100)}  ·  증가 ${up}종목 / 감소 ${D.length-up}종목  ·  종목은 1/2 시총 큰 순`,'#666');
@@ -21,23 +21,23 @@ const y0=250, rh=44;
 // 열 제목
 o += T(40,200,26,'종목','#666','bold');
 o += T(300,200,26,'① 시가총액 (W Bil.)',INK,'bold');
-o += `<rect x="620" y="182" width="18" height="18" fill="${LIGHT}"/>`+T(646,199,20,'1/2','#444')+`<rect x="700" y="182" width="18" height="18" fill="${DARK}"/>`+T(726,199,20,'10/8','#444');
+o += `<circle cx="640" cy="190" r="14" fill="${LIGHT}" stroke="#fff" stroke-width="2"/>`+T(662,200,28,'1/2',LIGHT,'bold')+`<circle cx="760" cy="190" r="14" fill="${DARK}" stroke="#fff" stroke-width="2"/>`+T(782,200,28,'10/8',DARK,'bold');
 o += T(1330,200,26,'② 변화율 (%)',INK,'bold');
-o += T(2360,200,26,'③ 증감액 (W Bil.)','#444','bold','end');
+o += T(2120,200,26,'③ 증감액 (W Bil.)','#444','bold','end');
 const px0=300, pw=700, max=Math.max(...D.map(x=>Math.max(x[1],x[2]))), sx=v=>px0+(v/max)*pw;
 const zx=1560, hw=300, lo=-90, hi=60, k=hw*2/ (hi-lo);   // 변화율 축
 const cx = v => zx + v*(330/90);
 for(const v of [-80,-60,-40,-20,0,20,40,60]) o+=`<line x1="${cx(v)}" x2="${cx(v)}" y1="${y0-14}" y2="${y0+D.length*rh}" stroke="${v==0?'#999':'#eceef2'}"/>`+T(cx(v),y0+D.length*rh+26,18,v+'%','#888','normal','middle');
 D.forEach(([n,a,b],i)=>{ const y=y0+i*rh, cy=y+rh/2, ch=(b/a-1)*100, c=ch>=0?GREEN:RED;
-  if(i%2==0) o+=`<rect x="30" y="${y}" width="2340" height="${rh}" fill="#f6f7f9"/>`;
+  if(i%2==0) o+=`<rect x="30" y="${y}" width="2100" height="${rh}" fill="#f6f7f9"/>`;
   o+=T(40,cy+8,24,n,INK,'bold');
   o+=`<line x1="${sx(a)}" x2="${sx(b)}" y1="${cy}" y2="${cy}" stroke="${c}" stroke-width="6"/>`;
-  o+=`<circle cx="${sx(a)}" cy="${cy}" r="9" fill="${LIGHT}" stroke="#7d889f" stroke-width="2"/><circle cx="${sx(b)}" cy="${cy}" r="9" fill="${DARK}"/>`;
+  o+=`<circle cx="${sx(a)}" cy="${cy}" r="14" fill="${LIGHT}" stroke="#fff" stroke-width="2"/><circle cx="${sx(b)}" cy="${cy}" r="14" fill="${DARK}" stroke="#fff" stroke-width="2"/>`;
   const mx=Math.max(a,b);
-  o+=T(sx(mx)+18,cy+7,20,`${fmt(a)} → ${fmt(b)}`,'#555');
+  o+=T(sx(mx)+26,cy+7,20,`${fmt(a)} → ${fmt(b)}`,'#555');
   o+=`<rect x="${Math.min(cx(0),cx(ch))}" y="${cy-13}" width="${Math.abs(cx(ch)-cx(0))}" height="26" fill="${c}"/>`;
   o+= ch>=0 ? T(cx(ch)+10,cy+8,22,pc(ch),INK,'bold') : T(cx(ch)-10,cy+8,22,pc(ch),INK,'bold','end');
-  o+=T(2360,cy+8,22,sg(b-a),c,'bold','end');
+  o+=T(2120,cy+8,22,sg(b-a),c,'bold','end');
 });
 o += T(40,1560,20,'시가총액 = 발행주식수 × 종가 (엑셀 MKT Cap 열). 초록=증가, 빨강=감소. 발행주식수 변동(증자 등)은 반영되지 않음.','#666');
 document.getElementById('c').innerHTML=o;
