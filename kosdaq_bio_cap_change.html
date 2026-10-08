@@ -16,7 +16,7 @@ const T = (x,y,s,t,c=INK,w='normal',a='start') => `<text x="${x}" y="${y}" font-
 let o = '<rect width="2160" height="1600" fill="#ffffff"/>';
 o += T(40,64,44,'바이오/헬스케어 종목별 시가총액 변화 (2026-01-02 → 2026-10-08)',INK,'bold');
 const up = D.filter(x=>x[2]>x[1]).length;
-o += T(40,104,24,`${D.length}종목 합계 ${fmt(A)} → ${fmt(B)} (W Bil.)  ${pc((B/A-1)*100)}  ·  증가 ${up}종목 / 감소 ${D.length-up}종목  ·  종목은 1/2 시총 큰 순`,'#666');
+o += T(40,108,30,`${D.length}종목 합계 ${fmt(A)} (W Bil.) → ${fmt(B)} (W Bil.)  ${pc((B/A-1)*100)}  ·  증가 ${up}종목 / 감소 ${D.length-up}종목  ·  종목은 1월 2일 기준 시총 큰 순으로 정렬`,'#555');
 const y0=250, rh=44;
 // 열 제목
 o += T(40,200,26,'종목','#666','bold');
