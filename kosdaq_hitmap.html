@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KOSDAQ 150 Heat Map</title>
+<script src="xlsx.full.min.js"></script>
+<style>
+  body { margin:0; background:#1b1d22; color:#ddd; font-family:Arial, "Malgun Gothic", "Noto Sans CJK KR", sans-serif; }
+  header { padding:12px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0 12px 0 0; }
+  button, label.btn { background:#3a7bd5; color:#fff; border:0; border-radius:4px; padding:8px 14px; cursor:pointer; font-size:14px; }
+  button.sec { background:#444; }
+  input[type=file] { display:none; }
+  #msg { font-size:13px; color:#aaa; }
+  #drop { margin:0 16px 16px; border:2px dashed #555; border-radius:6px; padding:6px; }
+  #drop.over { border-color:#3a7bd5; }
+  #chips { margin:0 16px 10px; display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { font-size:12px; padding:4px 10px; border-radius:12px; background:#3a7bd5; color:#fff; cursor:pointer; user-select:none; }
+  .chip.off { background:#333; color:#888; text-decoration:line-through; }
+  svg { display:block; width:100%; height:auto; }
+  .help { margin:0 16px 24px; font-size:13px; color:#999; line-height:1.6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>KOSDAQ 150 Heat Map</h1>
+  <label class="btn">Excel 파일 열기<input id="file" type="file" accept=".xlsx,.xls,.csv"></label>
+  <button class="sec" id="sample">2026-10-07 기본 데이터</button>
+  <button class="sec" id="png">PNG로 저장 (고해상도)</button>
+  <select id="sheet" style="display:none;padding:7px"></select>
+  <label style="font-size:13px">가장 진한 색 ±<input id="scale" type="number" value="10" min="1" step="0.5" style="width:50px"/>%</label>
+  <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
+</header>
+<div id="chips"></div>
+<div id="drop"><svg id="map" viewBox="0 0 2400 1520" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div class="help">
+  Excel 열은 제목 이름으로 찾습니다: <b>종목명</b>(타일 이름), <b>Ticker</b>, <b>MKT Cap (W Bil.)</b>(가장 오른쪽 열을 크기 기준으로 사용), <b>Price(W)</b>(첫 열→마지막 열 가격으로 등락률 계산, <b>Change %</b> 열에 값이 있으면 그 값을 사용), <b>Group</b>(분류).
+  제목 행은 위쪽 15행 안에서 자동으로 찾습니다. 시트가 여러 개면 위쪽 목록에서 고를 수 있습니다.<br>
+  색상은 0%를 기준으로 ±3% / ±6.5% / ±10%에서 단계가 바뀌고, 그 사이는 부드럽게 이어집니다(맨 위 입력칸의 "가장 진한 색"으로 조절).
+</div>
+
+<script>
+const W = 2400, H = 1350, TOP = 80, BOT = 90, HT = TOP + H + BOT, HEADER = 45, GAP = 3, PNG_SCALE = 2;
+const svg = document.getElementById('map');
+const L = s => [...String(s)].reduce((a, c) => a + (c.charCodeAt(0) > 255 ? 1.45 : 1), 0);   // 글자 폭(영문=1, 한글≈1.45)
+const msg = document.getElementById('msg');
+
+/* ---------- 데이터 읽기 ---------- */
+function num(v) {
+  if (typeof v === 'number') return v;
+  if (v == null) return NaN;
+  let s = String(v).trim().replace(/[,$\s]/g, '');
+  let mult = 1;
+  const m = s.match(/([KMBT])$/i);
+  if (m) { mult = { K:1e3, M:1e6, B:1e9, T:1e12 }[m[1].toUpperCase()]; s = s.slice(0, -1); }
+  return parseFloat(s.replace('%', '')) * mult;
+}
+
+let dupCount = 0, lastItems = [], wb = null;
+
+// 제목 행에서 열 위치를 이름으로 찾음. 못 찾으면 A(Ticker) C(Market Cap) E(Change %) H(Class III)
+// 'MKT Cap'이 두 번 나오면(9/28, 10/2) 마지막 것(최근 날짜)을 크기 기준으로 씀.
+function findCols(head) {
+  const names = head.map(h => String(h == null ? '' : h).trim().toLowerCase());
+  const first = (test, fb) => { const i = names.findIndex(test); return i >= 0 ? i : fb; };
+  let c = -1;
+  names.forEach((n, i) => { if (n.startsWith('market cap') || n.startsWith('mkt cap')) c = i; });
+  return {
+    t: first(n => n.startsWith('ticker'), 0),
+    nm: first(n => n === '종목명', -1),
+    px: names.map((n, i) => n.startsWith('price') ? i : -1).filter(i => i >= 0),
+    c: c >= 0 ? c : 2,
+    d: first(n => n.includes('change'), -1),
+    g: first(n => n === 'group' || n.startsWith('industry class iii'), 7),
+    unit: c >= 0 && names[c].includes('bil') ? 1e9 : 1,     // 'MKT Cap ($Bil.)'는 이미 십억 달러 단위
+    weekly: names.some(n => n.startsWith('wk change') || n.startsWith('weekly')),
+  };
+}
+
+function rowsToItems(rows, col, headerIdx = 0) {
+  const items = [], seen = new Set();
+  dupCount = 0;
+  for (const r of rows.slice(headerIdx + 1)) {
+    const g = r[col.g], t = r[col.t], cap = num(r[col.c]) * (col.unit || 1);
+    if (!g || !t || !(cap > 0)) continue;
+    let chg = col.d >= 0 ? num(r[col.d]) : NaN;
+    if (isNaN(chg) && col.px && col.px.length >= 2) {      // 변동률 열이 비어 있으면 첫·마지막 가격으로 계산
+      const p0 = num(r[col.px[0]]), p1 = num(r[col.px[col.px.length - 1]]);
+      if (p0 > 0 && p1 > 0) chg = (p1 / p0 - 1) * 100;
+    }
+    if (isNaN(chg)) chg = 0;
+    const key = String(g).trim() + '|' + String(t).trim();
+    if (seen.has(key)) { dupCount++; continue; }   // 같은 분류의 같은 Ticker 중복 행은 1번만
+    seen.add(key);
+    const nm = col.nm >= 0 && r[col.nm] ? String(r[col.nm]).trim() : String(t).trim();
+    items.push({ group: String(g).trim(), ticker: nm, code: String(t).trim(), cap, chg });
+  }
+  return items;
+}
+
+// 위쪽 행의 (연, 월, 일) 숫자에서 기간을 읽음: 2026 9 28 ~~ 2026 10 2 → "2026-09-28 → 2026-10-02"
+function findPeriod(rows, headerIdx) {
+  for (let i = 0; i < headerIdx; i++) {
+    const n = rows[i].map(c => c && typeof c.v === 'number' ? c.v : null).filter(v => v != null);
+    if (n.length >= 6 && n[0] > 1900 && n[n.length - 3] > 1900) {
+      const f = a => `${a[0]}-${String(a[1]).padStart(2, '0')}-${String(a[2]).padStart(2, '0')}`;
+      const from = f(n.slice(0, 3)), to = f(n.slice(-3));
+      return from === to ? from : from + ' → ' + to;     // 시작·끝 날짜가 같으면 한 번만 표시
+    }
+  }
+  return '';
+}
+
+let titleText = 'KOSDAQ 150 Heat Map';
+function readSheet(name) {
+  const ws = wb.Sheets[name];
+  if (!ws || !ws['!ref']) return [];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const rows = [];
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    const row = [];
+    for (let C = 0; C <= range.e.c; C++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      row.push(cell ? { v: cell.v, z: cell.z } : null);
+    }
+    rows.push(row);
+  }
+  // 'Ticker' 제목이 있는 첫 행(위쪽 15행 안)을 제목 행으로 사용
+  let hi = rows.slice(0, 15).findIndex(r => r.some(c => c && String(c.v).trim().toLowerCase().startsWith('ticker')));
+  if (hi < 0) hi = 0;
+  const col = findCols(rows[hi].map(c => c && c.v));
+  // Excel의 % 서식 셀(0.0109 → 1.09%)은 100을 곱해서 % 단위로 맞춤
+  const plain = rows.map((row, i) => row.map((c, j) => {
+    if (!c) return null;
+    if (i > hi && j === col.d && typeof c.v === 'number' && c.z && String(c.z).includes('%')) return c.v * 100;
+    return c.v;
+  }));
+  const items = rowsToItems(plain, col, hi);
+  const period = findPeriod(rows, hi);
+  titleText = 'KOSDAQ 150 Heat Map' + (period ? '  (' + period + ')' : '');
+  return items;
+}
+
+function readWorkbook(buf) {
+  wb = XLSX.read(buf, { type: 'array', cellNF: true });
+  const sel = document.getElementById('sheet');
+  sel.innerHTML = wb.SheetNames.map(n => `<option>${esc(n)}</option>`).join('');
+  sel.style.display = wb.SheetNames.length > 1 ? '' : 'none';
+  // 데이터가 읽히는 첫 번째 시트를 기본으로 선택
+  const first = wb.SheetNames.find(n => readSheet(n).length > 0) || wb.SheetNames[0];
+  sel.value = first;
+  return readSheet(first);
+}
+
+/* ---------- Treemap (squarified) ---------- */
+function squarify(nodes, x, y, w, h) {
+  // nodes: 값(value) 내림차순. 각 node에 x,y,w,h를 채워 넣음
+  const total = nodes.reduce((s, n) => s + n.value, 0);
+  const scale = (w * h) / total;
+  let i = 0;
+  while (i < nodes.length) {
+    const short = Math.min(w, h);
+    let row = [], rowArea = 0, best = Infinity;
+    while (i < nodes.length) {
+      const a = nodes[i].value * scale;
+      const nArea = rowArea + a;
+      const mx = Math.max(a, ...row.map(n => n.value * scale));
+      const mn = Math.min(a, ...row.map(n => n.value * scale));
+      const worst = Math.max(short * short * mx / (nArea * nArea), nArea * nArea / (short * short * mn));
+      if (row.length && worst > best) break;
+      row.push(nodes[i]); rowArea = nArea; best = worst; i++;
+    }
+    const thick = rowArea / short;
+    let off = 0;
+    for (const n of row) {
+      const len = (n.value * scale) / thick;
+      if (w >= h) { n.x = x; n.y = y + off; n.w = thick; n.h = len; }
+      else        { n.x = x + off; n.y = y; n.w = len; n.h = thick; }
+      off += len;
+    }
+    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+  }
+}
+
+/* ---------- 색상 (+ 초록, - 빨강, 0 근처 회색) ---------- */
+const SCALE = () => parseFloat(document.getElementById('scale').value) || 10;   // 가장 진한 색이 되는 변동률(%)
+// 색 단계: 0, ±30%, ±65%, ±100% 지점(기본 ±3 / ±6.5 / ±10%)의 색을 두고 그 사이는 부드럽게 이어 줌
+const STEPS = [0.3, 0.65, 1];
+const RED   = ['#414554', '#a1424b', '#d3383d', '#ff1f2b'];     // 0, -3, -6.5, -10
+const GREEN = ['#414554', '#2f7d4a', '#2faa52', '#2de06a'];     // 0, +3, +6.5, +10
+const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+function color(chg) {
+  const pal = (chg >= 0 ? GREEN : RED).map(hex2rgb);
+  const t = Math.min(Math.abs(chg) / SCALE(), 1);
+  const pts = [0, ...STEPS];
+  let k = 0;
+  while (k < pts.length - 2 && t > pts[k + 1]) k++;
+  const u = (t - pts[k]) / (pts[k + 1] - pts[k]);
+  return `rgb(${pal[k].map((v, i) => Math.round(v + (pal[k + 1][i] - v) * u))})`;
+}
+function legendStops() {   // 범례: -10 -6.5 -3 0 +3 +6.5 +10
+  const v = STEPS.map(s => +(s * SCALE()).toFixed(2)).reverse();
+  return [...v.map(x => -x), 0, ...v.slice().reverse()];
+}
+
+/* ---------- 그리기 ---------- */
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+function fmt(chg) { return `(${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)`; }
+
+const hidden = new Set();   // 화면에서 제외할 그룹 이름 (위쪽 버튼으로 껐다 켬)
+function renderChips(items) {
+  const names = [...new Set(items.map(i => i.group))];
+  const box = document.getElementById('chips');
+  box.innerHTML = '';
+  for (const n of names) {
+    const c = document.createElement('span');
+    c.className = 'chip' + (hidden.has(n) ? ' off' : '');
+    c.textContent = n;
+    c.onclick = () => { hidden.has(n) ? hidden.delete(n) : hidden.add(n); render(lastItems); };
+    box.appendChild(c);
+  }
+}
+function render(all) {
+  lastItems = all;
+  renderChips(all);
+  const items = all.filter(i => !hidden.has(i.group));
+  if (!items.length) { svg.innerHTML = ''; msg.textContent = '표시할 그룹이 없습니다.'; return; }
+  const byGroup = new Map();
+  for (const it of items) {
+    if (!byGroup.has(it.group)) byGroup.set(it.group, []);
+    byGroup.get(it.group).push(it);
+  }
+  const groups = [...byGroup].map(([name, list]) => {
+    list.sort((a, b) => b.cap - a.cap);
+    return { name, list, value: list.reduce((s, i) => s + i.cap, 0) };
+  }).sort((a, b) => b.value - a.value);
+
+  squarify(groups, 0, 0, W, H);
+
+  let out = `<rect width="${W}" height="${HT}" fill="#1b1d22"/>`;
+  out += `<text x="14" y="54" font-size="44" font-weight="bold" fill="#fff">${esc(titleText)}</text>`;
+  out += `<g transform="translate(0,${TOP})">`;
+  for (const g of groups) {
+    const gx = g.x + GAP / 2, gy = g.y + GAP / 2, gw = g.w - GAP, gh = g.h - GAP;
+    out += `<rect x="${gx}" y="${gy}" width="${gw}" height="${gh}" fill="#262a33"/>`;
+    const bil = g.value / 1e9;
+    const capTxt = `(₩${bil >= 10 ? Math.round(bil).toLocaleString() : bil.toFixed(1)} Bil.)`;   // 예: ($674 Bil.)
+    const label = g.name.toUpperCase() + ' ' + capTxt;
+    const avail = gw - 12;
+    const cw = 0.68;                                 // 글자 1개의 대략적 폭(글자 크기 대비)
+    let fs = 30;                                     // 그룹 이름 글자 크기: 기본 30, 좁으면 21까지 줄이고, 그래도 안 되면 줄바꿈(최대 3줄)
+    while (fs > 21 && L(label) * fs * cw > avail) fs--;
+    let lines = [label];
+    if (L(label) * fs * cw > avail) {
+      const tokens = [...g.name.toUpperCase().split(/(?<=[ /])/).map(t => t.trimEnd()), capTxt];   // 공백·'/' 뒤에서 줄바꿈, 금액은 한 덩어리
+      const longest = Math.max(...tokens.map(L));
+      while (fs > 11 && longest * fs * cw > avail) fs--;   // 가장 긴 단어(금액 포함)가 잘리지 않도록 글자를 더 줄임
+      const maxCh = Math.max(Math.floor(avail / (fs * cw)), 3);
+      lines = [];
+      for (const t of tokens) {
+        const cur = lines.length ? lines[lines.length - 1] : null;
+        const joined = cur == null ? t : (cur.endsWith('/') ? cur + t : cur + ' ' + t);
+        if (cur != null && L(joined) <= maxCh) lines[lines.length - 1] = joined; else lines.push(t);
+      }
+      if (lines.length > 3) lines = [lines[0], lines[1], lines.slice(2).join(' ')];
+      lines = lines.map(t => L(t) > maxCh ? [...t].slice(0, Math.max(Math.floor(maxCh / 1.45) - 1, 1)).join('') + '…' : t);
+    }
+    const headH = HEADER + (lines.length - 1) * (fs + 3);
+    const showHeader = gh > headH + 12 && gw > 40;
+    if (showHeader) {
+      out += `<g><title>${esc(g.name)} · ${g.list.length}종목 · 시가총액 ₩${(g.value / 1e9).toFixed(1)} Bil.</title>`;
+      lines.forEach((t, i) => {
+        out += `<text x="${gx + 6}" y="${gy + 32 + i * (fs + 3)}" font-size="${fs}" font-weight="bold" fill="#fff">${esc(t)}</text>`;
+      });
+      out += `</g>`;
+    }
+    const top = showHeader ? headH : 0;
+    const kids = g.list.map(i => ({ ...i, value: i.cap }));
+    squarify(kids, gx + 1, gy + top + 1, gw - 2, gh - top - 2);
+    for (const k of kids) {
+      const x = k.x + 0.5, y = k.y + 0.5, w = k.w - 1, h = k.h - 1;
+      out += `<g><title>${esc(k.ticker)} (${esc(k.code)}) ${fmt(k.chg)}\n${esc(g.name)} · 시가총액 ₩${(k.cap / 1e9).toFixed(1)} Bil.</title>`;
+      out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${color(k.chg)}"/>`;
+      const m = Math.min(w, h);
+      {
+        const chgTxt = fmt(k.chg);
+        const big = Math.min(m * 0.32, w / (L(k.ticker) * 0.7), 52);
+        // Ticker 글자 크기(원래 크기). 아주 작은 사각형은 사각형에 맞춰 더 작게(최소 4.5 = PNG에서 약 9px)
+        const fsMax = big >= 9 ? big : Math.min(h * 0.65, (w - 1) / (L(k.ticker) * 0.65), 9);
+        if (fsMax >= 4.5) {
+        // 변동률 줄이 들어갈 때까지 글자를 조금씩 줄여서, 가능한 한 모두 표시
+        let fs = fsMax, fc = 0, both = false;
+        for (let f = fsMax; f >= 5.5; f -= 0.5) {
+          const c = Math.min(f * 0.72, (w - 3) / (chgTxt.length * 0.6));   // 변동률 글자 크기(폭에 맞춤)
+          if (c >= 5.5 && f * 1.25 + c * 1.1 <= h - 2 && f * L(k.ticker) * 0.7 <= w - 2) { fs = f; fc = c; both = true; break; }
+        }
+        const cx = x + w / 2;
+        if (both) {
+          const gap = fs * 0.2, top = y + (h - (fs + gap + fc)) / 2;
+          out += `<text x="${cx}" y="${top + fs * 0.8}" text-anchor="middle" font-size="${fs}" font-weight="bold" fill="#fff">${esc(k.ticker)}</text>`;
+          out += `<text x="${cx}" y="${top + fs + gap + fc * 0.8}" text-anchor="middle" font-size="${fc}" fill="#fff">${chgTxt}</text>`;
+        } else {
+          out += `<text x="${cx}" y="${y + h / 2 + fsMax * 0.35}" text-anchor="middle" font-size="${fsMax}" font-weight="bold" fill="#fff">${esc(k.ticker)}</text>`;
+        }
+        }
+      }
+      out += `</g>`;
+    }
+  }
+  out += `</g>`;
+  const ls = legendStops(), bw = 170, bx = (W - bw * ls.length) / 2, by = TOP + H + 22;
+  out += `<text x="14" y="${by + 24}" font-size="22" fill="#aaa">Size: Market Cap (₩) · Color: change %</text>`;
+  ls.forEach((v, i) => {
+    out += `<rect x="${bx + i * bw}" y="${by}" width="${bw}" height="38" fill="${color(v)}"/>`;
+    out += `<text x="${bx + i * bw + bw / 2}" y="${by + 27}" text-anchor="middle" font-size="22" font-weight="bold" fill="#fff">${v > 0 ? '+' : ''}${v}%</text>`;
+  });
+  svg.innerHTML = out;
+  msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중` + (dupCount ? ` (중복 ${dupCount}행 제외)` : '') + (hidden.size ? ` · 숨긴 그룹 ${hidden.size}개` : '');
+}
+
+/* ---------- 입력 처리 ---------- */
+async function loadFile(file) {
+  try {
+    const items = readWorkbook(await file.arrayBuffer());
+    if (!items.length) { msg.textContent = '읽을 수 있는 데이터가 없습니다. 열 구성(A~D)을 확인해 주세요.'; return; }
+    render(items);
+  } catch (e) { msg.textContent = '파일을 읽지 못했습니다: ' + e.message; }
+}
+document.getElementById('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]); });
+
+const SAMPLE = [
+ ['Pharmaceutical','LLY',700,-0.63],['Pharmaceutical','JNJ',380,-2.3],['Pharmaceutical','ABBV',330,-0.64],['Pharmaceutical','MRK',250,-1.2],['Pharmaceutical','PFE',150,0.4],['Pharmaceutical','AMGN',140,1.2],['Pharmaceutical','BMY',100,-0.3],['Pharmaceutical','GILD',110,0.8],
+ ['Semiconductor','NVDA',3000,1.09],['Semiconductor','AVGO',800,-2.15],['Semiconductor','AMD',260,0.65],['Semiconductor','MU',120,3.03],['Semiconductor','INTC',90,-0.19],['Semiconductor','QCOM',180,-1.06],['Semiconductor','TXN',170,0.44],['Semiconductor','AMAT',150,3.5],
+ ['Software','MSFT',3100,-0.02],['Software','AAPL',3000,-0.81],['Software','ORCL',400,0.56],['Software','CRM',280,1.6],['Software','ADBE',200,-0.5],
+ ['Internet','GOOGL',2000,-1.7],['Internet','META',1300,0.10],['Internet','AMZN',1900,-0.37],['Internet','NFLX',300,-2.49],
+ ['Bank','JPM',600,0.71],['Bank','BAC',300,-1.39],['Bank','WFC',200,0.25],['Bank','C',120,-1.92],['Bank','GS',150,0.9],['Bank','MS',140,-0.4],
+];
+const KOSDAQ = [["바이오/헬스케어","삼천당제약","000250",5653.25,0.0],["IT/반도체","동진쎄미켐","005290",2599.477,-2.4857],["엔터/게임/소비재","서부T&D","006730",759.753,3.3217],["바이오/헬스케어","네이처셀","007390",1591.546,-0.202],["2차전지/소재","포스코엠텍","009520",549.684,-2.0772],["산업재/기계/전력","성광벤드","014620",780.786,-2.0],["산업재/기계/전력","성우하이텍","015750",473.6,-1.3333],["엔터/게임/소비재","브이티","018290",478.703,7.7891],["IT/반도체","시노펙스","025320",367.961,-0.3745],["2차전지/소재","동화기업","025900",371.596,-3.2895],["엔터/게임/소비재","아난티","025980",480.667,-2.1782],["바이오/헬스케어","HLB","028300",6113.797,-3.1646],["IT/반도체","한컴","030520",423.871,-4.9864],["IT/반도체","원익","030530",2243.763,-5.0654],["IT/반도체","PSK","319660",3974.233,-10.9091],["IT/반도체","다우데이타","032190",725.019,-1.5088],["IT/반도체","KMW","032500",843.834,-4.3062],["산업재/기계/전력","제룡전기","033100",789.467,-2.4802],["산업재/기계/전력","동성화인텍","033500",469.635,-2.9138],["엔터/게임/소비재","CJ ENM","035760",773.003,2.7697],["엔터/게임/소비재","JYP Ent.","035900",1369.777,1.8494],["IT/반도체","SFA반도체","036540",1864.98,-3.3248],["엔터/게임/소비재","감성","036620",344.624,1.8592],["2차전지/소재","솔브레인","357780",3216.439,-2.7059],["IT/반도체","주성엔지","036930",11504.077,-11.1311],["IT/반도체","에프에스티","036810",746.918,-3.7657],["IT/반도체","삼표시멘트","038500",843.905,15.8519],["IT/반도체","이오테크닉","039030",6381.527,-4.7794],["바이오/헬스케어","오스코텍","039200",1518.85,1.4049],["금융/지주","우리기투","041190",485.184,-3.0303],["엔터/게임/소비재","에스엠","041510",1808.681,1.023],["IT/반도체","성호전자","043260",2463.503,0.9274],["바이오/헬스케어","HDBio","048410",703.526,1.958],["IT/반도체","쏠리드","050890",613.641,-4.5369],["IT/반도체","코나아이","052400",523.55,-2.1769],["IT/반도체","안랩","053800",864.53,-12.6966],["산업재/기계/전력","유진로봇","056080",466.855,-5.2754],["산업재/기계/전력","SFA","056190",1114.967,-2.3585],["IT/반도체","리노공업","058470",6493.25,-1.9563],["IT/반도체","SPG","058610",2215.518,-6.0207],["IT/반도체","NHN KCP","060250",542.971,-1.3139],["바이오/헬스케어","큐렉소","060280",358.135,-3.5556],["산업재/기계/전력","LS마린","060370",1770.897,-3.0043],["IT/반도체","도카이카본","064760",3186.135,-3.8786],["IT/반도체","신성델타텍","065350",893.228,-3.9882],["엔터/게임/소비재","SOOP","067160",407.257,-0.9524],["IT/반도체","하나마이크론","067310",3371.087,-3.9773],["바이오/헬스케어","셀트리온제약","068760",1780.533,1.1349],["엔터/게임/소비재","웹젠","069080",375.005,0.9167],["IT/반도체","원익QnC","074600",830.701,-3.6585],["엔터/게임/소비재","컴투스","078340",446.169,-0.8065],["2차전지/소재","대주전자재료","078600",1758.864,0.5386],["IT/반도체","제주반도체","080220",2917.308,-9.5085],["바이오/헬스케어","젬백스","082270",504.38,0.0903],["산업재/기계/전력","BHI","083650",1770.019,-1.7182],["2차전지/소재","비츠로셀","082920",1333.872,-1.99],["IT/반도체","유진테크","084370",3872.811,-6.1632],["바이오/헬스케어","차바이오텍","085660",795.848,-1.1547],["2차전지/소재","에코프로","086520",12477.833,-3.6688],["바이오/헬스케어","펩트론","087010",3045.246,0.0],["IT/반도체","테크윙","089030",1989.781,-6.2827],["산업재/기계/전력","로보스타","090360",763.425,-4.1616],["산업재/기계/전력","휴림로봇","090710",750.831,-3.9755],["IT/반도체","ISC","095340",4292.405,-1.4599],["IT/반도체","테스","095610",3157.616,-7.5397],["바이오/헬스케어","씨젠","096530",1817.968,4.4295],["엔터/게임/소비재","네오위즈","095660",391.62,-1.3086],["IT/반도체","고영","098460",2468.992,-0.6859],["산업재/기계/전력","쎄트렉아이","099320",823.536,-8.9588],["IT/반도체","S&S","101490",1139.283,-0.7435],["엔터/게임/소비재","위메이드맥스","101730",466.784,20.9555],["엔터/게임/소비재","위메이드","112040",538.083,1.3427],["2차전지/소재","나노신소재","121600",767.613,-2.1875],["엔터/게임/소비재","YG","122870",775.679,1.9656],["IT/반도체","ITCEN글로벌","124500",648.567,-6.6778],["IT/반도체","티에스이","131290",3495.412,0.7974],["IT/반도체","두산테스나","131970",2108.602,-9.0833],["2차전지/소재","피플&테크놀로지","137400",765.211,-3.438],["IT/반도체","파크시스템스","140860",2156.761,0.3257],["바이오/헬스케어","리가켐바이오","141080",2980.063,-4.0524],["바이오/헬스케어","휴젤","145020",2297.785,1.157],["엔터/게임/소비재","데브시스터즈","194480",169.395,-0.1435],["바이오/헬스케어","알테오젠","196170",17901.368,-1.1538],["IT/반도체","덕산네오룩스","213420",739.969,-2.6144],["바이오/헬스케어","클래시스","214150",2002.735,-2.0734],["바이오/헬스케어","케어젠","214370",2390.318,3.2483],["IT/반도체","i3시스템","214430",579.463,-1.8564],["바이오/헬스케어","파마리서치","214450",3205.207,0.817],["엔터/게임/소비재","메가스터디","215200",393.878,0.5291],["IT/반도체","RFHIC","218410",1565.293,-5.609],["산업재/기계/전력","SFA넥셀","222080",658.02,-3.5348],["IT/반도체","심텍","222800",6557.764,-2.6286],["엔터/게임/소비재","넥슨게임즈","225570",687.58,-4.6575],["IT/반도체","YC","232140",1410.36,-5.1848],["IT/반도체","원익IPS","240810",6434.899,-7.2187],["바이오/헬스케어","에스티팜","237690",2012.508,-0.516],["산업재/기계/전력","우리기술","032820",2140.801,-3.2031],["IT/반도체","인텔리안텍","189300",735.519,-7.9301],["엔터/게임/소비재","코스메카","241710",1249.56,5.9783],["IT/반도체","서진시스템","178320",2631.78,-3.8417],["IT/반도체","코미코","183300",1697.556,-2.9369],["2차전지/소재","필옵틱스","161580",977.542,-0.3584],["금융/지주","하림지주","003380",1284.704,-1.0354],["IT/반도체","이녹스","272290",439.622,-3.5011],["엔터/게임/소비재","펄어비스","263750",2086.418,0.7587],["IT/반도체","선익시스템","171090",735.266,-3.5857],["엔터/게임/소비재","스튜디오드래곤","253450",622.211,1.4706],["2차전지/소재","Lake머티리얼즈","281740",832.806,-3.0604],["IT/반도체","하나머티리얼즈","166090",1218.304,-5.2308],["엔터/게임/소비재","카페24","042000",545.218,-1.7429],["IT/반도체","네오셈","253590",699.274,-1.7868],["바이오/헬스케어","올릭스","226950",2806.745,0.0816],["IT/반도체","브이엠","089970",1712.867,-8.3807],["산업재/기계/전력","로보티즈","108490",4480.778,-3.1696],["금융/지주","미래에셋벤처","100790",892.957,-7.8904],["2차전지/소재","에코프로비엠","247540",13412.559,-3.4135],["산업재/기계/전력","현대무벡스","319400",2244.226,-4.0476],["엔터/게임/소비재","펌텍코리아","251970",833.28,6.6667],["2차전지/소재","천보","278280",471.129,-2.4112],["바이오/헬스케어","엘앤씨바이오","290650",1788.044,11.2595],["바이오/헬스케어","ABL바이오","298380",2860.959,-2.6667],["IT/반도체","PSK홀딩스","031980",4398.728,3.5533],["IT/반도체","태성","323280",1823.117,-2.1311],["IT/반도체","제이앤티씨","204270",1492.491,12.4183],["IT/반도체","솔브레인","036830",966.763,-4.3611],["엔터/게임/소비재","카카오게임즈","293490",1079.195,0.999],["IT/반도체","넥스틴","348210",398.126,-6.1728],["산업재/기계/전력","레인보우","277810",8671.737,-4.0773],["엔터/게임/소비재","C&C인터내셔널","352480",286.228,2.6895],["바이오/헬스케어","HK이노엔","195940",1154.443,-1.3317],["엔터/게임/소비재","실리콘투","257720",2462.388,2.1769],["2차전지/소재","엔켐","348370",508.335,-4.5267],["엔터/게임/소비재","디어유","376300",447.944,0.8552],["금융/지주","인카금융","211050",489.188,2.4768],["산업재/기계/전력","유일로보틱스","388720",818.804,-3.2033],["IT/반도체","가온칩스","399720",554.401,-3.0083],["바이오/헬스케어","보로노이","310210",2732.911,-5.0453],["IT/반도체","HPSP","403870",5390.65,-4.7965],["바이오/헬스케어","루닛","328130",831.698,0.4496],["바이오/헬스케어","GI이노베이션","358570",574.838,-1.7641],["IT/반도체","기가비스","420770",1715.03,-0.1476],["IT/반도체","큐리옥스","445680",1019.702,-3.7398],["2차전지/소재","LS머트리얼즈","417200",1055.381,-1.1407],["산업재/기계/전력","삼현","437730",1604.403,-2.3166],["바이오/헬스케어","디앤디파마텍","347850",2120.424,-3.0494],["산업재/기계/전력","에이치브이엠","295310",903.434,-6.1278],["산업재/기계/전력","클로봇","466100",711.936,-4.5643],["바이오/헬스케어","오름테라퓨틱","475830",448.11,0.7335],["산업재/기계/전력","한라캐스트","125490",470.88,-6.1135],["바이오/헬스케어","에임드바이오","0009K0",1687.065,0.3876]];   // [그룹, 종목명, 종목코드, 시가총액(W Bil.), 등락률 %]  기간: 2026-10-06 → 2026-10-07
+function sampleItems() {
+  titleText = 'KOSDAQ 150 Heat Map  (2026-10-06 → 2026-10-07)';
+  return KOSDAQ.map(([group, ticker, code, c, chg]) => ({ group, ticker, code, cap: c * 1e9, chg }));
+}
+function _unused() {
+  titleText = 'Sample Heat Map';
+  return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE], { g: 0, t: 1, c: 2, d: 3 });
+}
+document.getElementById('scale').oninput = () => lastItems.length && render(lastItems);
+document.getElementById('sheet').onchange = e => {
+  const items = readSheet(e.target.value);
+  items.length ? render(items) : (msg.textContent = '이 시트에서 읽을 수 있는 데이터가 없습니다.');
+};
+document.getElementById('sample').onclick = () => render(sampleItems());
+
+document.getElementById('png').onclick = () => {
+  const xml = new XMLSerializer().serializeToString(svg);
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = W * PNG_SCALE; c.height = HT * PNG_SCALE;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    const a = document.createElement('a');
+    a.download = 'heatmap_' + W * PNG_SCALE + 'x' + HT * PNG_SCALE + '.png'; a.href = c.toDataURL('image/png'); a.click();
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+};
+
+render(sampleItems());
+</script>
+</body>
+</html>
