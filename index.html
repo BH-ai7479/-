@@ -29,6 +29,7 @@
   <button class="sec" id="sample">샘플 데이터 보기</button>
   <button class="sec" id="png">PNG로 저장 (고해상도)</button>
   <select id="sheet" style="display:none;padding:7px"></select>
+  <label style="font-size:13px">기간 표시 <input id="period" type="text" placeholder="비워 두면 파일의 날짜" style="width:190px"/></label>
   <label style="font-size:13px">가장 진한 색 ±<input id="scale" type="number" value="10" min="1" step="0.5" style="width:50px"/>%</label>
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
 </header>
@@ -104,7 +105,12 @@ function findPeriod(rows, headerIdx) {
   return '';
 }
 
-let titleText = 'Biotech Heat Map';
+let titlePrefix = 'Biotech Heat Map', autoPeriod = '';
+// 제목: 이름 + (기간). 위쪽 "기간 표시" 칸에 직접 쓴 값이 있으면 그것을, 비어 있으면 파일의 날짜를 사용
+function titleNow() {
+  const p = document.getElementById('period').value.trim() || autoPeriod;
+  return titlePrefix + (p ? '  (' + p + ')' : '');
+}
 function readSheet(name) {
   const ws = wb.Sheets[name];
   if (!ws || !ws['!ref']) return [];
@@ -130,7 +136,8 @@ function readSheet(name) {
   }));
   const items = rowsToItems(plain, col, hi);
   const period = findPeriod(rows, hi);
-  titleText = (col.weekly ? 'Weekly Biotech Heat Map' : 'Biotech Heat Map') + (period ? '  (' + period + ')' : '');
+  titlePrefix = col.weekly ? 'Weekly Biotech Heat Map' : 'Biotech Heat Map';
+  autoPeriod = period;
   return items;
 }
 
@@ -231,7 +238,7 @@ function render(all) {
   squarify(groups, 0, 0, W, H);
 
   let out = `<rect width="${W}" height="${HT}" fill="#1b1d22"/>`;
-  out += `<text id="svgTitle" x="20" y="108" font-size="96" font-weight="bold" fill="#fff">${esc(titleText)}</text>`;   // 제목 글자 크기 96 (이전 44의 2배 이상)
+  out += `<text id="svgTitle" x="20" y="108" font-size="96" font-weight="bold" fill="#fff">${esc(titleNow())}</text>`;   // 제목 글자 크기 96 (이전 44의 2배 이상)
   out += `<g transform="translate(0,${TOP})">`;
   for (const g of groups) {
     const gx = g.x + GAP / 2, gy = g.y + GAP / 2, gw = g.w - GAP, gh = g.h - GAP;
@@ -336,9 +343,10 @@ const SAMPLE = [
  ['Bank','JPM',600,0.71],['Bank','BAC',300,-1.39],['Bank','WFC',200,0.25],['Bank','C',120,-1.92],['Bank','GS',150,0.9],['Bank','MS',140,-0.4],
 ];
 function sampleItems() {
-  titleText = 'Sample Heat Map';
+  titlePrefix = 'Sample Heat Map'; autoPeriod = '';
   return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE], { g: 0, t: 1, c: 2, d: 3 });
 }
+document.getElementById('period').oninput = () => lastItems.length && render(lastItems);
 document.getElementById('scale').oninput = () => lastItems.length && render(lastItems);
 document.getElementById('sheet').onchange = e => {
   const items = readSheet(e.target.value);
