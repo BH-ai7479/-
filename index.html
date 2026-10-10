@@ -33,7 +33,7 @@
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
 </header>
 <div id="chips"></div>
-<div id="drop"><svg id="map" viewBox="0 0 2400 1520" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<div id="drop"><svg id="map" viewBox="0 0 2400 1590" xmlns="http://www.w3.org/2000/svg"></svg></div>
 <div class="help">
   Excel 열은 제목 이름으로 찾습니다: <b>Ticker</b>, <b>MKT Cap</b>(가장 오른쪽 열을 크기 기준으로 사용), <b>WK Change %</b>(또는 Change %), <b>Industry Class III</b>(분류).
   제목 행은 위쪽 15행 안에서 자동으로 찾고, 못 찾으면 A=Ticker, C=Market Cap, E=Change %, H=분류로 읽습니다. 시트가 여러 개면 위쪽 목록에서 고를 수 있습니다.<br>
@@ -41,7 +41,7 @@
 </div>
 
 <script>
-const W = 2400, H = 1350, TOP = 80, BOT = 90, HT = TOP + H + BOT, HEADER = 45, GAP = 3, PNG_SCALE = 2;
+const W = 2400, H = 1350, TOP = 150, BOT = 90, HT = TOP + H + BOT, HEADER = 45, GAP = 3, PNG_SCALE = 2;
 const svg = document.getElementById('map');
 const msg = document.getElementById('msg');
 
@@ -231,7 +231,7 @@ function render(all) {
   squarify(groups, 0, 0, W, H);
 
   let out = `<rect width="${W}" height="${HT}" fill="#1b1d22"/>`;
-  out += `<text x="14" y="54" font-size="44" font-weight="bold" fill="#fff">${esc(titleText)}</text>`;
+  out += `<text id="svgTitle" x="20" y="108" font-size="96" font-weight="bold" fill="#fff">${esc(titleText)}</text>`;   // 제목 글자 크기 96 (이전 44의 2배 이상)
   out += `<g transform="translate(0,${TOP})">`;
   for (const g of groups) {
     const gx = g.x + GAP / 2, gy = g.y + GAP / 2, gw = g.w - GAP, gh = g.h - GAP;
@@ -307,7 +307,10 @@ function render(all) {
     out += `<rect x="${bx + i * bw}" y="${by}" width="${bw}" height="38" fill="${color(v)}"/>`;
     out += `<text x="${bx + i * bw + bw / 2}" y="${by + 27}" text-anchor="middle" font-size="22" font-weight="bold" fill="#fff">${v > 0 ? '+' : ''}${v}%</text>`;
   });
+  svg.setAttribute('viewBox', `0 0 ${W} ${HT}`);
   svg.innerHTML = out;
+  const tt = svg.querySelector('#svgTitle');            // 제목이 한 줄에 안 들어가면 폭에 맞춰 줄임
+  if (tt) { const wt = tt.getComputedTextLength(); if (wt > W - 40) tt.setAttribute('font-size', (96 * (W - 40) / wt).toFixed(1)); }
   msg.textContent = `${groups.length}개 분류, ${items.length}개 종목 표시 중` + (dupCount ? ` (중복 ${dupCount}행 제외)` : '') + (hidden.size ? ` · 숨긴 그룹 ${hidden.size}개` : '');
 }
 
