@@ -29,6 +29,7 @@
   <button class="sec" id="sample">샘플 데이터 보기</button>
   <button class="sec" id="png">PNG로 저장 (고해상도)</button>
   <select id="sheet" style="display:none;padding:7px"></select>
+  <label style="font-size:13px">제목 <input id="titlePre" type="text" placeholder="비워 두면 자동" style="width:170px"/></label>
   <label style="font-size:13px">기간 표시 <input id="period" type="text" placeholder="비워 두면 파일의 날짜" style="width:190px"/></label>
   <label style="font-size:13px">가장 진한 색 ±<input id="scale" type="number" value="10" min="1" step="0.5" style="width:50px"/>%</label>
   <span id="msg">Excel 파일을 여기에 끌어다 놓아도 됩니다.</span>
@@ -109,7 +110,8 @@ let titlePrefix = 'Biotech Heat Map', autoPeriod = '';
 // 제목: 이름 + (기간). 위쪽 "기간 표시" 칸에 직접 쓴 값이 있으면 그것을, 비어 있으면 파일의 날짜를 사용
 function titleNow() {
   const p = document.getElementById('period').value.trim() || autoPeriod;
-  return titlePrefix + (p ? '  (' + p + ')' : '');
+  const pre = document.getElementById('titlePre').value.trim() || titlePrefix;   // 제목 칸이 비어 있으면 자동(Weekly/Biotech …)
+  return pre + (p ? '  (' + p + ')' : '');
 }
 function readSheet(name) {
   const ws = wb.Sheets[name];
@@ -346,7 +348,7 @@ function sampleItems() {
   titlePrefix = 'Sample Heat Map'; autoPeriod = '';
   return rowsToItems([['Group','Ticker','Market Cap','Change %'], ...SAMPLE], { g: 0, t: 1, c: 2, d: 3 });
 }
-document.getElementById('period').oninput = () => lastItems.length && render(lastItems);
+document.getElementById('period').oninput = document.getElementById('titlePre').oninput = () => lastItems.length && render(lastItems);
 document.getElementById('scale').oninput = () => lastItems.length && render(lastItems);
 document.getElementById('sheet').onchange = e => {
   const items = readSheet(e.target.value);
