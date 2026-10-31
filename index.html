@@ -254,7 +254,9 @@ function render(all) {
     while (fs > 21 && label.length * fs * cw > avail) fs--;
     let lines = [label];
     if (label.length * fs * cw > avail) {
-      const tokens = [...g.name.toUpperCase().split(/(?<=[ /])/).map(t => t.trimEnd()), capTxt];   // 공백·'/' 뒤에서 줄바꿈, 금액은 한 덩어리
+      // 가장 작은 글자(11)로도 금액이 한 줄에 안 들어가면 '($15'와 'Bil.)'로 나눠서 모두 보이게 함
+      const capParts = capTxt.length * 11 * cw > avail ? capTxt.split(' ') : [capTxt];
+      const tokens = [...g.name.toUpperCase().split(/(?<=[ /])/).map(t => t.trimEnd()), ...capParts];   // 공백·'/' 뒤에서 줄바꿈, 금액은 한 덩어리
       const longest = Math.max(...tokens.map(t => t.length));
       while (fs > 11 && longest * fs * cw > avail) fs--;   // 가장 긴 단어(금액 포함)가 잘리지 않도록 글자를 더 줄임
       const maxCh = Math.max(Math.floor(avail / (fs * cw)), 3);
