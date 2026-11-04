@@ -1,20 +1,20 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>미국 Biotech 가이드 핵심 종목</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#f1f5fb;font-family:"Noto Sans CJK KR","Noto Sans KR","Malgun Gothic",sans-serif;color:#0f1b33}
-#c{width:900px;margin:0 auto;background:#f1f5fb}
+*{box-sizing:border-box}body{margin:0;background:#fff;font-family:"Noto Sans CJK KR","Noto Sans KR","Malgun Gothic",sans-serif;color:#0f1b33}
+#c{width:900px;margin:0 auto;background:#fff}
 .hd{background:#0d1b3a;height:80px;border-bottom:4px solid #1f7fd1;display:flex;align-items:center;justify-content:space-between;padding:0 44px}
 .hd .l{display:flex;align-items:center;gap:12px;color:#fff;font-weight:800;font-size:27px}
 .hd .l i{width:5px;height:30px;background:#27b4f0;border-radius:2px}
 .hd .l small{font-size:17px;color:#9fb0cf;font-weight:700}
 .hd .r{color:#cfd9ec;font-size:18px;font-weight:700}
-.bd{padding:40px 44px 0}.top{display:flex;justify-content:space-between;align-items:flex-end}.per{white-space:nowrap;color:#1f7fd1;font-size:19px;font-weight:800;padding-bottom:6px}
+.bd{padding:40px 44px 40px}.top{display:flex;justify-content:space-between;align-items:flex-end}.per{white-space:nowrap;color:#1f7fd1;font-size:19px;font-weight:800;padding-bottom:6px}
 h1{margin:0;white-space:nowrap;font-size:36px;font-weight:800;letter-spacing:-1px}
 .sub{display:flex;justify-content:space-between;color:#5d6b88;font-weight:700;font-size:16px;margin-top:4px;padding-bottom:6px;border-bottom:2px solid #d9e0ec}
 .sub b{color:#1f7fd1}
-.rows{position:relative;margin-top:18px}
+.rows{position:relative;margin-top:26px}
 .axis{z-index:2;position:absolute;top:-4px;bottom:-4px;width:2px;background:#5b6784}
-.row{position:relative;height:77px;border-radius:12px;border:1px solid #dbe2ee}
-.row.w{background:#fff}
+.row{position:relative;height:77px;border-radius:12px;border:1px solid #d6e6f5}
+.row{background:#fff}.row.w{background:#e6f2fc}
 .t{position:absolute;left:18px;top:10px}
 .t s{display:block;text-decoration:none;font-size:15px;font-weight:700;color:#667392;line-height:18px}
 .t span{display:block;font-size:24px;font-weight:800;line-height:34px}
@@ -25,17 +25,16 @@ h1{margin:0;white-space:nowrap;font-size:36px;font-weight:800;letter-spacing:-1p
 .src{border-top:2px solid #d9e0ec;margin-top:14px;padding:16px 0 30px;display:flex;justify-content:space-between;color:#6b7791;font-size:16px}
 </style></head><body><div id="c">
 <div class="bd"><div class="top"><h1>미국 Biotech 가이드 핵심 종목</h1><div class="per" id="per"></div></div>
-<div class="sub"><span>WATCHLIST · 정규장 종가 기준 · 전일 대비</span><b id="n"></b></div>
 <div class="rows" id="rows"><div class="axis" id="ax"></div></div>
-<div class="src"><span>출처: Biotech Universe Hit Map (통합 Universe_주간용) · 11/2→11/3 종가 기준</span><span>※ 투자 권유 아님</span></div></div></div>
+</div></div>
 <script>
-const D=[["TNGX","탱고 테라퓨틱스",21.76,23.17],["SDGR","슈뢰딩거",26.19,27.18],["MRNA","모더나",220.83,228.44],["RVMD","레볼루션 메디슨스",188.17,194.23],["ABSI","앱시",9.69,10],["NTRA","나테라",378.92,388.63],["KOD","코디악 사이언시스",97.625,98.89],["KYMR","카이메라",127.51,127.09],["RXRX","리커전",3.83,3.68]]
+const D=[["TNGX","탱고",21.76,23.17],["SDGR","슈뢰딩거",26.19,27.18],["MRNA","모더나",220.83,228.44],["RVMD","레볼루션",188.17,194.23],["ABSI","앱시",9.69,10],["NTRA","나테라",378.92,388.63],["KOD","코디악",97.625,98.89],["KYMR","키메라",127.51,127.09],["RXRX","리커전",3.83,3.68]]
 .map(d=>({t:d[0],n:d[1],p:d[2],q:d[3],c:(d[3]/d[2]-1)*100})).sort((a,b)=>b.c-a.c);
 const Z=505-44,S=36,R=document.getElementById('rows');
 document.getElementById('ax').style.left=Z+'px';
 document.getElementById('per').textContent='2026.11.02 → 11.03';
 D.forEach((d,i)=>{const w=Math.abs(d.c)*S,up=d.c>=0,f=(up?'+':'')+d.c.toFixed(2)+'%';
-const r=document.createElement('div');r.className='row'+(i%2==0?' w':'');
+const r=document.createElement('div');r.className='row'+(i%2==1?' w':'');
 r.innerHTML=`<div class="t"><s>${d.t}</s><span>${d.n}</span></div><div class="bar ${up?'up':'dn'}" style="left:${up?Z:Z-w}px;width:${w}px"></div><div class="v ${up?'cu':'cd'}" style="${up?`left:${Z+w+14}px`:`right:${900-88-(Z-w)+14}px;text-align:right`}">${f}</div>`;
 R.appendChild(r)});
 </script></body></html>
