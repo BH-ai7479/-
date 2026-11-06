@@ -32,7 +32,7 @@ const D=[["MRNA","모더나",220.83,254.19],["SDGR","슈뢰딩거",26.19,29.82],
 .map(d=>({t:d[0],n:d[1],p:d[2],q:d[3],c:(d[3]/d[2]-1)*100})).sort((a,b)=>b.c-a.c);
 const Z=440,S=12,R=document.getElementById('rows');
 document.getElementById('ax').style.left=Z+'px';
-document.getElementById('per').textContent='2026.11.02 → 11.07';
+document.getElementById('per').textContent='2026.11.02 → 11.06';
 D.forEach((d,i)=>{const w=Math.abs(d.c)*S,up=d.c>=0,f=(up?'+':'')+d.c.toFixed(2)+'%';
 const r=document.createElement('div');r.className='row'+(i%2==1?' w':'');
 r.innerHTML=`<div class="t"><s>${d.t}</s><span>${d.n}</span></div><div class="bar ${up?'up':'dn'}" style="left:${up?Z:Z-w}px;width:${w}px"></div><div class="v ${up?'cu':'cd'}" style="${up?`left:${Z+w+14}px`:`right:${900-88-(Z-w)+14}px;text-align:right`}">${f}</div>`;
